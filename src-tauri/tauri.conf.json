@@ -1,0 +1,34 @@
+{
+  "productName": "agentOS GUI",
+  "version": "0.1.0",
+  "identifier": "io.agentos.gui",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label":         "main",
+        "title":         "agentOS",
+        "width":         1200,
+        "height":        780,
+        "minWidth":      900,
+        "minHeight":     600,
+        "decorations":   true,
+        "transparent":   false,
+        "resizable":     true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/icon.png"]
+  }
+}
