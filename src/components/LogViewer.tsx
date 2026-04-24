@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 interface Props {
   lines:    string[];
@@ -7,7 +7,9 @@ interface Props {
 }
 
 export function LogViewer({ lines, onClear, onFetch }: Props) {
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const bottomRef  = useRef<HTMLDivElement>(null);
+  const [slot, setSlot]   = useState(0);
+  const [pdId, setPdId]   = useState(0);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -15,32 +17,60 @@ export function LogViewer({ lines, onClear, onFetch }: Props) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="mb-3 flex items-center justify-between">
-        <div className="flex gap-2">
-          <button
-            onClick={() => onFetch(0, 0)}
-            className="rounded-lg border border-os-border px-3 py-1.5
-                       font-mono text-xs text-os-muted transition
-                       hover:border-os-accent/50 hover:text-os-accent"
-          >
-            Drain
-          </button>
-          <button
-            onClick={onClear}
-            className="rounded-lg border border-os-border px-3 py-1.5
-                       font-mono text-xs text-os-muted transition
-                       hover:border-red-500/40 hover:text-red-400"
-          >
-            Clear
-          </button>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        {/* PD selector */}
+        <div className="flex items-center gap-1.5">
+          <label htmlFor="log-slot" className="font-mono text-xs text-os-muted">slot</label>
+          <input
+            id="log-slot"
+            type="number"
+            min={0}
+            value={slot}
+            onChange={e => setSlot(Math.max(0, Number(e.target.value)))}
+            className="w-14 rounded border border-os-border bg-os-bg px-2 py-1
+                       font-mono text-xs text-os-text focus:border-os-accent focus:outline-none"
+          />
         </div>
-        <span className="font-mono text-xs text-os-muted">{lines.length} lines</span>
+        <div className="flex items-center gap-1.5">
+          <label htmlFor="log-pd" className="font-mono text-xs text-os-muted">pd</label>
+          <input
+            id="log-pd"
+            type="number"
+            min={0}
+            value={pdId}
+            onChange={e => setPdId(Math.max(0, Number(e.target.value)))}
+            className="w-14 rounded border border-os-border bg-os-bg px-2 py-1
+                       font-mono text-xs text-os-text focus:border-os-accent focus:outline-none"
+          />
+        </div>
+
+        <button
+          onClick={() => onFetch(slot, pdId)}
+          className="rounded-lg border border-os-border px-3 py-1.5
+                     font-mono text-xs text-os-muted transition
+                     hover:border-os-accent/50 hover:text-os-accent"
+        >
+          Drain
+        </button>
+        <button
+          onClick={onClear}
+          className="rounded-lg border border-os-border px-3 py-1.5
+                     font-mono text-xs text-os-muted transition
+                     hover:border-red-500/40 hover:text-red-400"
+        >
+          Clear
+        </button>
+
+        <span className="ml-auto font-mono text-xs text-os-muted">{lines.length} lines</span>
       </div>
 
       <div className="flex-1 overflow-y-auto rounded-xl border border-os-border
                       bg-black/40 p-4 font-mono text-xs leading-relaxed">
         {lines.length === 0 ? (
-          <p className="text-os-muted">No log output yet — click Drain or wait for auto-poll.</p>
+          <div className="flex h-full flex-col items-center justify-center gap-2 text-os-muted">
+            <p>No log output yet</p>
+            <p className="text-xs opacity-60">Select a slot and PD, then click Drain — or wait for auto-poll</p>
+          </div>
         ) : (
           lines.map((line, i) => (
             <div

@@ -81,6 +81,23 @@ export const DEV_TYPE_ICON: Record<number, string> = {
 
 export const CC_DEV_TYPE_COUNT = 5;
 
+export const DEV_STATE: Record<number, string> = {
+  0: 'Idle',
+  1: 'Active',
+  2: 'Error',
+  3: 'Suspended',
+};
+
+export function devStateColor(state: number): string {
+  switch (state) {
+    case 0: return 'text-slate-400';
+    case 1: return 'text-emerald-400';
+    case 2: return 'text-red-400';
+    case 3: return 'text-sky-400';
+    default: return 'text-slate-400';
+  }
+}
+
 // Input event types
 export const CC_INPUT_KEY_DOWN   = 0x01;
 export const CC_INPUT_KEY_UP     = 0x02;

@@ -1,5 +1,5 @@
 import type { DeviceInfo } from '../types';
-import { DEV_TYPE_NAME, DEV_TYPE_ICON, CC_DEV_TYPE_COUNT } from '../types';
+import { DEV_TYPE_NAME, DEV_TYPE_ICON, DEV_STATE, devStateColor, CC_DEV_TYPE_COUNT } from '../types';
 
 const DEV_COLORS: Record<number, string> = {
   0: 'border-violet-500/30 bg-violet-500/5',
@@ -55,8 +55,8 @@ export function DevicePanel({ devices }: Props) {
                   <p className="font-mono text-xs text-os-text">
                     handle 0x{d.dev_handle.toString(16).padStart(4, '0')}
                   </p>
-                  <p className="font-mono text-xs text-os-muted">
-                    state {d.state}
+                  <p className={`font-mono text-xs ${devStateColor(d.state)}`}>
+                    {DEV_STATE[d.state] ?? `state-${d.state}`}
                   </p>
                 </div>
               ))}

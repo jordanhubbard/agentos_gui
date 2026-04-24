@@ -11,11 +11,11 @@ interface Props {
   onDisconnect: () => void;
 }
 
-const TABS: { id: Tab; label: string; icon: string }[] = [
-  { id: 'guests',  label: 'Guests',  icon: '⬡' },
-  { id: 'devices', label: 'Devices', icon: '◈' },
-  { id: 'logs',    label: 'Logs',    icon: '≡' },
-  { id: 'agents',  label: 'Agents',  icon: '◎' },
+const TABS: { id: Tab; label: string; icon: string; shortcut: string }[] = [
+  { id: 'guests',  label: 'Guests',  icon: '⬡', shortcut: '⌘1' },
+  { id: 'devices', label: 'Devices', icon: '◈', shortcut: '⌘2' },
+  { id: 'logs',    label: 'Logs',    icon: '≡', shortcut: '⌘3' },
+  { id: 'agents',  label: 'Agents',  icon: '◎', shortcut: '⌘4' },
 ];
 
 export function Sidebar({ tab, onTab, connected, sockPath, polecats, onDisconnect }: Props) {
@@ -52,6 +52,7 @@ export function Sidebar({ tab, onTab, connected, sockPath, polecats, onDisconnec
           <button
             key={t.id}
             onClick={() => onTab(t.id)}
+            title={t.shortcut}
             className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left
                         font-mono text-sm transition-colors
                         ${tab === t.id
@@ -59,7 +60,8 @@ export function Sidebar({ tab, onTab, connected, sockPath, polecats, onDisconnec
                           : 'text-os-muted hover:bg-os-border/50 hover:text-os-text'}`}
           >
             <span className="text-base leading-none">{t.icon}</span>
-            {t.label}
+            <span className="flex-1">{t.label}</span>
+            <span className="text-[10px] opacity-40">{t.shortcut}</span>
           </button>
         ))}
       </nav>

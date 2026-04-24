@@ -1,6 +1,19 @@
 import { useState } from 'react';
 
-const SOCK_PATH_KEY = 'cc_sock_path';
+const SOCK_PATH_KEY    = 'cc_sock_path';
+const SOCK_HISTORY_KEY = 'cc_sock_history';
+const MAX_HISTORY      = 5;
+
+function loadHistory(): string[] {
+  try { return JSON.parse(localStorage.getItem(SOCK_HISTORY_KEY) ?? '[]'); }
+  catch { return []; }
+}
+
+function saveHistory(path: string) {
+  const h = [path, ...loadHistory().filter(p => p !== path)].slice(0, MAX_HISTORY);
+  localStorage.setItem(SOCK_HISTORY_KEY, JSON.stringify(h));
+  localStorage.setItem(SOCK_PATH_KEY, path);
+}
 
 interface Props {
   onConnect: (path: string) => void;
@@ -11,10 +24,13 @@ export function ConnectDialog({ onConnect, error }: Props) {
   const [path, setPath] = useState(
     () => localStorage.getItem(SOCK_PATH_KEY) ?? 'build/cc_pd.sock',
   );
+  const [history] = useState<string[]>(loadHistory);
 
   function handleConnect() {
-    localStorage.setItem(SOCK_PATH_KEY, path);
-    onConnect(path);
+    const trimmed = path.trim();
+    if (!trimmed) return;
+    saveHistory(trimmed);
+    onConnect(trimmed);
   }
 
   return (
@@ -32,14 +48,14 @@ export function ConnectDialog({ onConnect, error }: Props) {
         </div>
 
         <p className="mb-6 text-sm text-os-muted">
-          Connect to a running agentOS instance via the CC-PD socket.
+          Connect to a running agentOS instance via the CC-PD Unix socket.
         </p>
 
         <label className="mb-1 block text-xs font-medium uppercase tracking-widest text-os-muted">
           Socket path
         </label>
         <input
-          className="mb-4 w-full rounded-lg border border-os-border bg-os-bg px-3 py-2
+          className="mb-2 w-full rounded-lg border border-os-border bg-os-bg px-3 py-2
                      font-mono text-sm text-os-text placeholder:text-os-muted
                      focus:border-os-accent focus:outline-none"
           value={path}
@@ -47,7 +63,26 @@ export function ConnectDialog({ onConnect, error }: Props) {
           onKeyDown={e => e.key === 'Enter' && handleConnect()}
           placeholder="build/cc_pd.sock"
           spellCheck={false}
+          autoFocus
         />
+
+        {/* Recent paths */}
+        {history.length > 0 && (
+          <div className="mb-4 flex flex-wrap gap-1.5">
+            {history.map(p => (
+              <button
+                key={p}
+                onClick={() => setPath(p)}
+                className={`rounded border px-2 py-0.5 font-mono text-xs transition
+                            ${p === path
+                              ? 'border-os-accent/50 text-os-accent'
+                              : 'border-os-border text-os-muted hover:border-os-accent/40 hover:text-os-text'}`}
+              >
+                {p.split('/').pop()}
+              </button>
+            ))}
+          </div>
+        )}
 
         {error && (
           <p className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2
@@ -66,7 +101,9 @@ export function ConnectDialog({ onConnect, error }: Props) {
         </button>
 
         <p className="mt-4 text-center font-mono text-xs text-os-muted">
-          Set <code className="text-os-accent">CC_PD_SOCK</code> to override the default path
+          Press <kbd className="rounded border border-os-border px-1 py-0.5">Enter</kbd> to connect
+          &nbsp;·&nbsp;
+          Set <code className="text-os-accent">CC_PD_SOCK</code> to override the default
         </p>
       </div>
     </div>
