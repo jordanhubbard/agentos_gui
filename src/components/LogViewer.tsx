@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 interface Props {
   lines:    string[];
   onClear:  () => void;
-  onFetch:  (slot: number, pdId: number) => void;
+  onFetch:  (slot: number, pdId: number) => Promise<string>;
 }
 
 export function LogViewer({ lines, onClear, onFetch }: Props) {

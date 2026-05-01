@@ -6,21 +6,24 @@ export const DEFAULT_MOCKS: Record<string, unknown> = {
   cc_disconnect:         null,
   cc_is_connected:       true,
   cc_get_sock_path:      'build/cc_pd.sock',
+  cc_should_autoconnect: false,
   cc_list_guests: [
-    { guest_handle: 1, state: 2, os_type: 0, arch: 0 },  // Linux aarch64 Running
-    { guest_handle: 2, state: 1, os_type: 1, arch: 1 },  // FreeBSD riscv64 Booting
+    { guest_handle: 1, state: 4, os_type: 1, arch: 1 },  // Linux aarch64 Running
+    { guest_handle: 2, state: 3, os_type: 2, arch: 2 },  // FreeBSD x86_64 Booting
   ],
+  cc_guest_status:       { guest_handle: 1, state: 4, os_type: 1, arch: 1, device_flags: 7 },
   cc_list_devices: [
-    { dev_type: 0, dev_handle:  1, state: 2 },  // Serial
-    { dev_type: 1, dev_handle:  2, state: 2 },  // Network
-    { dev_type: 4, dev_handle: 10, state: 2 },  // Framebuffer
+    { dev_type: 0, dev_handle:  1, state: 1 },  // Serial
+    { dev_type: 1, dev_handle:  2, state: 1 },  // Network
+    { dev_type: 4, dev_handle: 10, state: 1 },  // Framebuffer
   ],
   cc_list_polecats:      { total: 8, busy: 3, idle: 5 },
   cc_log_stream:         '',
   cc_snapshot:           { snap_lo: 1, snap_hi: 2 },
   cc_restore:            null,
+  cc_create_guest:       { handle: 3 },
   cc_send_input:         null,
-  cc_device_status:      { dev_type: 0, dev_handle: 1, state: 2 },
+  cc_device_status:      { dev_type: 0, dev_handle: 1, state: 1 },
   cc_attach_framebuffer: 1,
 };
 

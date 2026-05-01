@@ -1,7 +1,8 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type {
-  GuestInfo, GuestStatus, DeviceInfo, PoecatStatus, SnapResult, InputEvent,
+  GuestInfo, GuestStatus, DeviceInfo, DeviceStatusInfo, PoecatStatus, SnapResult,
+  InputEvent, GuestCreateRequest, GuestCreateResult,
 } from '../types';
 
 export interface AgentOSState {
@@ -28,6 +29,42 @@ export function useAgentOS() {
   });
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const refreshRef = useRef(false);
+  const logFetchRef = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      invoke<string>('cc_get_sock_path'),
+      invoke<boolean>('cc_should_autoconnect'),
+    ])
+      .then(async ([sockPath, shouldAutoconnect]) => {
+        if (cancelled || !sockPath) return;
+
+        setState(s => ({ ...s, sockPath }));
+        if (!shouldAutoconnect) return;
+
+        try {
+          await invoke('cc_connect', { path: sockPath });
+          if (!cancelled) {
+            setState(s => ({
+              ...s,
+              connected: true,
+              sockPath,
+              error: null,
+            }));
+            startPolling();
+          }
+        } catch (e) {
+          if (!cancelled) {
+            setState(s => ({ ...s, error: String(e) }));
+          }
+        }
+      })
+      .catch(() => {});
+
+    return () => { cancelled = true; };
+  }, []);
 
   const setError = (msg: string | null) =>
     setState(s => ({ ...s, error: msg }));
@@ -51,20 +88,39 @@ export function useAgentOS() {
   }, []);
 
   const refresh = useCallback(async () => {
+    if (refreshRef.current) return;
+    refreshRef.current = true;
     setState(s => ({ ...s, refreshing: true }));
     try {
-      const [guests, devices, polecats] = await Promise.all([
+      const [rawGuests, devices, polecats] = await Promise.all([
         invoke<GuestInfo[]>('cc_list_guests'),
         invoke<DeviceInfo[]>('cc_list_devices', { devType: null }),
         invoke<PoecatStatus>('cc_list_polecats'),
       ]);
+      const guests = await Promise.all(rawGuests.map(async guest => {
+        try {
+          const status = await invoke<GuestStatus>('cc_guest_status', {
+            handle: guest.guest_handle,
+          });
+          return {
+            ...guest,
+            device_flags: status.device_flags,
+          };
+        } catch {
+          return guest;
+        }
+      }));
       setState(s => ({ ...s, guests, devices, polecats, error: null, refreshing: false }));
     } catch (e) {
       setState(s => ({ ...s, refreshing: false, error: String(e) }));
+    } finally {
+      refreshRef.current = false;
     }
   }, []);
 
   const fetchLogs = useCallback(async (slot: number, pdId: number) => {
+    if (logFetchRef.current) return '';
+    logFetchRef.current = true;
     try {
       const text = await invoke<string>('cc_log_stream', { slot, pdId });
       if (text) {
@@ -74,7 +130,10 @@ export function useAgentOS() {
           logLines: [...s.logLines, ...lines].slice(-500),
         }));
       }
+      return text;
     } catch {}
+    finally { logFetchRef.current = false; }
+    return '';
   }, []);
 
   const guestStatus = useCallback(
@@ -96,6 +155,18 @@ export function useAgentOS() {
   const sendInput = useCallback(
     (handle: number, event: InputEvent) =>
       invoke<void>('cc_send_input', { handle, event }),
+    [],
+  );
+
+  const deviceStatus = useCallback(
+    (devType: number, devHandle: number) =>
+      invoke<DeviceStatusInfo>('cc_device_status', { devType, devHandle }),
+    [],
+  );
+
+  const createGuest = useCallback(
+    (request: GuestCreateRequest) =>
+      invoke<GuestCreateResult>('cc_create_guest', { request }),
     [],
   );
 
@@ -128,6 +199,8 @@ export function useAgentOS() {
     snapshot,
     restore,
     sendInput,
+    deviceStatus,
+    createGuest,
     clearLogs,
     setError,
   };

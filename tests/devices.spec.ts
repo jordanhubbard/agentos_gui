@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { setupTauriMock } from './helpers/tauri';
+import { setupTauriMock, getCallsFor } from './helpers/tauri';
 import { connectApp, switchTab } from './helpers/app';
 
 test.describe('Device panel', () => {
@@ -48,6 +48,14 @@ test.describe('Device panel', () => {
     test('does not show empty type sections', async ({ page }) => {
       // USB (type 3) has no devices — its section should not appear
       await expect(page.getByText('USB')).not.toBeVisible();
+    });
+
+    test('Probe calls cc_device_status for the selected device', async ({ page }) => {
+      await page.getByRole('button', { name: 'Probe' }).first().click();
+      const calls = await getCallsFor(page, 'cc_device_status');
+      expect(calls.length).toBeGreaterThan(0);
+      expect((calls[0].args as any).devType).toBe(0);
+      expect((calls[0].args as any).devHandle).toBe(1);
     });
   });
 });

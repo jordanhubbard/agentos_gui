@@ -31,14 +31,35 @@ agentos (running in QEMU)
 
 ## Getting started
 
+Start agentOS first; its default `make run` boots the local Ubuntu guest and
+opens the CC-PD socket at `build/cc_pd.sock`:
+
 ```sh
-cd /path/to/agentos_gui
-npm install
-npm run dev          # opens the window with hot-reload
+cd /path/to/agentos
+make run
 ```
 
-Point the connect dialog at your agentOS socket (default: `build/cc_pd.sock` relative to
-the agentOS working directory, or set `CC_PD_SOCK` env var).
+Then launch the GUI from this repository:
+
+```sh
+cd /path/to/agentos_gui
+make build
+make run             # opens the native app against ../agentos/build/cc_pd.sock
+```
+
+`make run` sets `CC_PD_SOCK` to the sibling agentOS socket by default,
+enables autoconnect, and talks directly to `cc_pd` at
+`../agentos/build/cc_pd.sock`. Override the socket when needed:
+
+```sh
+make run CC_PD_SOCK=/path/to/agentos/build/cc_pd.sock
+```
+
+For hot-reload development, use:
+
+```sh
+make dev
+```
 
 ## Build
 

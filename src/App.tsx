@@ -3,14 +3,34 @@ import { useAgentOS } from './hooks/useAgentOS';
 import { ConnectDialog } from './components/ConnectDialog';
 import { Sidebar, type Tab } from './components/Sidebar';
 import { GuestCard } from './components/GuestCard';
+import { GuestConsole } from './components/GuestConsole';
+import { GuestLauncher } from './components/GuestLauncher';
 import { DevicePanel } from './components/DevicePanel';
 import { LogViewer } from './components/LogViewer';
 import { AgentPool } from './components/AgentPool';
 
 export default function App() {
-  const { state, connect, disconnect, refresh, fetchLogs, snapshot, restore, clearLogs } =
+  const {
+    state, connect, disconnect, refresh, fetchLogs, snapshot, restore,
+    sendInput, deviceStatus, createGuest, clearLogs,
+  } =
     useAgentOS();
   const [tab, setTab] = useState<Tab>('guests');
+  const [selectedGuestHandle, setSelectedGuestHandle] = useState<number | null>(null);
+
+  const selectedGuest = state.guests.find(g => g.guest_handle === selectedGuestHandle)
+    ?? state.guests[0]
+    ?? null;
+
+  useEffect(() => {
+    if (state.guests.length === 0) {
+      setSelectedGuestHandle(null);
+      return;
+    }
+    if (!selectedGuest || !state.guests.some(g => g.guest_handle === selectedGuest.guest_handle)) {
+      setSelectedGuestHandle(state.guests[0].guest_handle);
+    }
+  }, [state.guests, selectedGuest]);
 
   useEffect(() => {
     if (!state.connected) return;
@@ -27,7 +47,13 @@ export default function App() {
   }, [state.connected, refresh]);
 
   if (!state.connected) {
-    return <ConnectDialog onConnect={connect} error={state.error} />;
+    return (
+      <ConnectDialog
+        defaultPath={state.sockPath}
+        onConnect={connect}
+        error={state.error}
+      />
+    );
   }
 
   return (
@@ -70,35 +96,46 @@ export default function App() {
         {/* Content */}
         <div className="flex-1 overflow-y-auto px-6 py-5">
           {tab === 'guests' && (
-            state.guests.length === 0 ? (
-              <div className="flex h-full flex-col items-center justify-center gap-3 text-os-muted">
-                <p className="font-mono text-sm">No guest OS instances running</p>
-                <p className="font-mono text-xs opacity-60">
-                  Use <code className="text-os-accent">VOS_CREATE</code> via the CC-PD API to launch a guest
-                </p>
-                <button
-                  onClick={refresh}
-                  className="mt-2 rounded-lg border border-os-border px-4 py-2 font-mono text-xs
-                             text-os-muted transition hover:border-os-accent/50 hover:text-os-accent"
-                >
-                  ⟳ Refresh
-                </button>
-              </div>
-            ) : (
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {state.guests.map(g => (
-                  <GuestCard
-                    key={g.guest_handle}
-                    guest={g}
-                    onSnapshot={snapshot}
-                    onRestore={restore}
+            <div className="space-y-5">
+              <GuestLauncher onCreate={createGuest} onCreated={refresh} />
+
+              {state.guests.length === 0 ? (
+                <div className="flex min-h-[20rem] flex-col items-center justify-center gap-3 text-os-muted">
+                  <p className="font-mono text-sm">No guest OS instances running</p>
+                  <button
+                    onClick={refresh}
+                    className="mt-2 rounded-lg border border-os-border px-4 py-2 font-mono text-xs
+                               text-os-muted transition hover:border-os-accent/50 hover:text-os-accent"
+                  >
+                    ⟳ Refresh
+                  </button>
+                </div>
+              ) : (
+                <div className="grid gap-5 xl:grid-cols-[minmax(22rem,32rem)_1fr]">
+                  <div className="grid content-start gap-4">
+                    {state.guests.map(g => (
+                      <GuestCard
+                        key={g.guest_handle}
+                        guest={g}
+                        selected={selectedGuest?.guest_handle === g.guest_handle}
+                        onSelect={() => setSelectedGuestHandle(g.guest_handle)}
+                        onSnapshot={snapshot}
+                        onRestore={restore}
+                      />
+                    ))}
+                  </div>
+                  <GuestConsole
+                    guest={selectedGuest}
+                    lines={state.logLines}
+                    onFetch={fetchLogs}
+                    onSendInput={sendInput}
                   />
-                ))}
-              </div>
-            )
+                </div>
+              )}
+            </div>
           )}
 
-          {tab === 'devices' && <DevicePanel devices={state.devices} />}
+          {tab === 'devices' && <DevicePanel devices={state.devices} onStatus={deviceStatus} />}
 
           {tab === 'logs' && (
             <LogViewer

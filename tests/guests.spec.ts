@@ -36,8 +36,8 @@ test.describe('Guest list', () => {
       await expect(page.getByText('aarch64')).toBeVisible();
     });
 
-    test('shows arch for FreeBSD guest (riscv64)', async ({ page }) => {
-      await expect(page.getByText('riscv64')).toBeVisible();
+    test('shows arch for FreeBSD guest (x86_64)', async ({ page }) => {
+      await expect(page.getByText('x86_64')).toBeVisible();
     });
 
     test('Running state shown in emerald color', async ({ page }) => {
@@ -59,6 +59,70 @@ test.describe('Guest list', () => {
     test('Restore button is disabled before snapshot', async ({ page }) => {
       const restoreButtons = page.getByRole('button', { name: 'Restore' });
       await expect(restoreButtons.first()).toBeDisabled();
+    });
+
+    test('selecting a guest targets the console pane', async ({ page }) => {
+      await page.getByText('FreeBSD').click();
+      await expect(page.getByText('selected 0x00000002')).toBeVisible();
+    });
+
+    test('console Drain calls cc_log_stream and renders returned lines', async ({ page }) => {
+      await page.getByRole('button', { name: 'Drain' }).click();
+      const calls = await getCallsFor(page, 'cc_log_stream');
+      expect(calls.length).toBeGreaterThan(0);
+      expect((calls[0].args as any).slot).toBe(0);
+      expect((calls[0].args as any).pdId).toBe(0);
+    });
+
+    test('console input buttons call cc_send_input for the selected guest', async ({ page }) => {
+      await page.getByRole('button', { name: 'Enter' }).click();
+      const calls = await getCallsFor(page, 'cc_send_input');
+      expect(calls.length).toBeGreaterThan(0);
+      expect((calls[0].args as any).handle).toBe(1);
+      expect((calls[0].args as any).event.keycode).toBe(0x28);
+    });
+
+    test('terminal key presses send raw console bytes', async ({ page }) => {
+      const terminal = page.getByRole('textbox', { name: 'Guest terminal' });
+      await terminal.click();
+      await terminal.press('r');
+      await terminal.press('Enter');
+
+      const calls = await getCallsFor(page, 'cc_send_input');
+      expect(calls.length).toBeGreaterThanOrEqual(2);
+      expect((calls.at(-2)!.args as any).event.keycode).toBe(0x100 | 'r'.charCodeAt(0));
+      expect((calls.at(-1)!.args as any).event.keycode).toBe(0x100 | 0x0d);
+    });
+
+    test('console input sends line input to the selected guest', async ({ page }) => {
+      const input = page.getByRole('textbox', { name: 'Console input' });
+      await input.fill('ubuntu');
+      await input.press('Enter');
+
+      const calls = await getCallsFor(page, 'cc_send_input');
+      const keycodes = calls.slice(-7).map(call => (call.args as any).event.keycode);
+      expect(keycodes).toEqual([
+        0x100 | 'u'.charCodeAt(0),
+        0x100 | 'b'.charCodeAt(0),
+        0x100 | 'u'.charCodeAt(0),
+        0x100 | 'n'.charCodeAt(0),
+        0x100 | 't'.charCodeAt(0),
+        0x100 | 'u'.charCodeAt(0),
+        0x100 | 0x0d,
+      ]);
+      expect((calls.at(-1)!.args as any).handle).toBe(1);
+    });
+
+    test('Start calls cc_create_guest with launch settings', async ({ page }) => {
+      await page.getByRole('button', { name: 'Start' }).click();
+      const calls = await getCallsFor(page, 'cc_create_guest');
+      expect(calls.length).toBeGreaterThan(0);
+      expect((calls[0].args as any).request).toMatchObject({
+        os_type: 1,
+        arch: 1,
+        ram_mb: 512,
+        device_flags: 7,
+      });
     });
   });
 });

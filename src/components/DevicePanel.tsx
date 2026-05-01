@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { DeviceInfo } from '../types';
 import { DEV_TYPE_NAME, DEV_TYPE_ICON, DEV_STATE, devStateColor, CC_DEV_TYPE_COUNT } from '../types';
 
@@ -17,9 +18,13 @@ const DEV_ICON_COLOR: Record<number, string> = {
   4: 'text-pink-400',
 };
 
-interface Props { devices: DeviceInfo[] }
+interface Props {
+  devices: DeviceInfo[];
+  onStatus: (devType: number, devHandle: number) => Promise<DeviceInfo>;
+}
 
-export function DevicePanel({ devices }: Props) {
+export function DevicePanel({ devices, onStatus }: Props) {
+  const [messages, setMessages] = useState<Record<string, string>>({});
   const byType: Record<number, DeviceInfo[]> = {};
   for (let i = 0; i < CC_DEV_TYPE_COUNT; i++) byType[i] = [];
   for (const d of devices) (byType[d.dev_type] ??= []).push(d);
@@ -30,6 +35,20 @@ export function DevicePanel({ devices }: Props) {
         <p className="font-mono text-sm">No devices reported</p>
       </div>
     );
+  }
+
+  async function probe(device: DeviceInfo) {
+    const key = `${device.dev_type}:${device.dev_handle}`;
+    setMessages(m => ({ ...m, [key]: 'probing...' }));
+    try {
+      const status = await onStatus(device.dev_type, device.dev_handle);
+      setMessages(m => ({
+        ...m,
+        [key]: DEV_STATE[status.state] ?? `state-${status.state}`,
+      }));
+    } catch (e) {
+      setMessages(m => ({ ...m, [key]: String(e) }));
+    }
   }
 
   return (
@@ -58,6 +77,18 @@ export function DevicePanel({ devices }: Props) {
                   <p className={`font-mono text-xs ${devStateColor(d.state)}`}>
                     {DEV_STATE[d.state] ?? `state-${d.state}`}
                   </p>
+                  <button
+                    onClick={() => probe(d)}
+                    className="mt-3 rounded border border-os-border px-2 py-1 font-mono text-xs
+                               text-os-muted transition hover:border-os-accent/50 hover:text-os-accent"
+                  >
+                    Probe
+                  </button>
+                  {messages[`${d.dev_type}:${d.dev_handle}`] && (
+                    <p className="mt-2 truncate font-mono text-xs text-os-muted">
+                      {messages[`${d.dev_type}:${d.dev_handle}`]}
+                    </p>
+                  )}
                 </div>
               ))}
             </div>

@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 const SOCK_PATH_KEY    = 'cc_sock_path';
 const SOCK_HISTORY_KEY = 'cc_sock_history';
 const MAX_HISTORY      = 5;
+const FALLBACK_SOCK_PATH = 'build/cc_pd.sock';
 
 function loadHistory(): string[] {
   try { return JSON.parse(localStorage.getItem(SOCK_HISTORY_KEY) ?? '[]'); }
@@ -16,15 +17,23 @@ function saveHistory(path: string) {
 }
 
 interface Props {
+  defaultPath: string;
   onConnect: (path: string) => void;
   error:     string | null;
 }
 
-export function ConnectDialog({ onConnect, error }: Props) {
+export function ConnectDialog({ defaultPath, onConnect, error }: Props) {
   const [path, setPath] = useState(
-    () => localStorage.getItem(SOCK_PATH_KEY) ?? 'build/cc_pd.sock',
+    () => localStorage.getItem(SOCK_PATH_KEY) ?? defaultPath,
   );
   const [history] = useState<string[]>(loadHistory);
+
+  useEffect(() => {
+    const storedPath = localStorage.getItem(SOCK_PATH_KEY);
+    if (defaultPath && (!storedPath || defaultPath !== FALLBACK_SOCK_PATH)) {
+      setPath(defaultPath);
+    }
+  }, [defaultPath]);
 
   function handleConnect() {
     const trimmed = path.trim();

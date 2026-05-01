@@ -9,9 +9,11 @@ interface Props {
   guest:      GuestInfo;
   onSnapshot: (handle: number) => Promise<SnapResult>;
   onRestore:  (handle: number, lo: number, hi: number) => Promise<void>;
+  selected?: boolean;
+  onSelect?: () => void;
 }
 
-export function GuestCard({ guest, onSnapshot, onRestore }: Props) {
+export function GuestCard({ guest, onSnapshot, onRestore, selected = false, onSelect }: Props) {
   const [snap, setSnap]   = useState<SnapResult | null>(null);
   const [busy, setBusy]   = useState(false);
   const [msg, setMsg]     = useState<string | null>(null);
@@ -39,8 +41,21 @@ export function GuestCard({ guest, onSnapshot, onRestore }: Props) {
   }
 
   return (
-    <div className="rounded-xl border border-os-border bg-os-surface p-5 transition
-                    hover:border-os-accent/40">
+    <div
+      tabIndex={0}
+      onClick={onSelect}
+      onKeyDown={e => {
+        if ((e.key === 'Enter' || e.key === ' ') && onSelect) {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
+      className={`rounded-xl border bg-os-surface p-5 text-left transition
+                    hover:border-os-accent/40 ${
+                      selected ? 'border-os-accent/70 shadow-[0_0_0_1px_rgba(99,102,241,.25)]'
+                      : 'border-os-border'
+                    }`}
+    >
       {/* Header */}
       <div className="mb-4 flex items-start justify-between">
         <div className="flex items-center gap-2.5">
@@ -76,7 +91,7 @@ export function GuestCard({ guest, onSnapshot, onRestore }: Props) {
       {/* Actions */}
       <div className="flex gap-2">
         <button
-          onClick={doSnapshot}
+          onClick={e => { e.stopPropagation(); doSnapshot(); }}
           disabled={busy}
           className="flex-1 rounded-lg border border-os-border px-3 py-1.5
                      font-mono text-xs text-os-muted transition
@@ -86,7 +101,7 @@ export function GuestCard({ guest, onSnapshot, onRestore }: Props) {
           Snapshot
         </button>
         <button
-          onClick={doRestore}
+          onClick={e => { e.stopPropagation(); doRestore(); }}
           disabled={busy || !snap}
           className="flex-1 rounded-lg border border-os-border px-3 py-1.5
                      font-mono text-xs text-os-muted transition
