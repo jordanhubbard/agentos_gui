@@ -8,13 +8,16 @@
 //! All MSG_CC_* constants mirror agentos.h exactly.
 
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::os::unix::net::UnixStream;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 // ── MSG_CC_* opcodes (from agentos.h) ────────────────────────────────────────
 pub const MSG_CC_CONNECT: u32 = 0x2601;
 pub const MSG_CC_DISCONNECT: u32 = 0x2602;
+pub const MSG_CC_SEND: u32 = 0x2603;
+pub const MSG_CC_RECV: u32 = 0x2604;
 pub const MSG_CC_STATUS: u32 = 0x2605;
 pub const MSG_CC_LIST: u32 = 0x2606;
 pub const MSG_CC_LIST_GUESTS: u32 = 0x2607;
@@ -28,6 +31,7 @@ pub const MSG_CC_SNAPSHOT: u32 = 0x260E;
 pub const MSG_CC_RESTORE: u32 = 0x260F;
 pub const MSG_CC_LOG_STREAM: u32 = 0x2610;
 pub const MSG_CC_CREATE_GUEST: u32 = 0x2611;
+pub const MSG_CC_FAULT_INJECT: u32 = 0x2612;
 
 // ── Device type constants (CC_DEV_TYPE_*) ────────────────────────────────────
 pub const CC_DEV_TYPE_SERIAL: u32 = 0;
@@ -37,11 +41,22 @@ pub const CC_DEV_TYPE_USB: u32 = 3;
 pub const CC_DEV_TYPE_FB: u32 = 4;
 pub const CC_DEV_TYPE_COUNT: u32 = 5;
 
+// ── Session constants (CC_SESSION_STATE_*, CC_CMD_TYPE_*) ───────────────────
+pub const CC_CMD_TYPE_QUERY: u32 = 0x01;
+pub const CC_CMD_TYPE_ACTION: u32 = 0x02;
+pub const CC_CMD_TYPE_STREAM: u32 = 0x03;
+
+pub const CC_SESSION_STATE_CONNECTED: u32 = 0;
+pub const CC_SESSION_STATE_IDLE: u32 = 1;
+pub const CC_SESSION_STATE_BUSY: u32 = 2;
+pub const CC_SESSION_STATE_EXPIRED: u32 = 3;
+
 // ── Wire frame sizes ──────────────────────────────────────────────────────────
 const CC_SHMEM_SIZE: usize = 4096;
 const CC_REQ_SIZE: usize = 4 + 12 + CC_SHMEM_SIZE; // 4112
 const CC_REPLY_SIZE: usize = 16 + CC_SHMEM_SIZE; // 4112
 const CC_IO_TIMEOUT: Duration = Duration::from_secs(5);
+const CC_TRAFFIC_MAX: usize = 512;
 
 // ── Serde types for Tauri ─────────────────────────────────────────────────────
 
@@ -74,6 +89,36 @@ pub struct PoecatStatus {
     pub total: u32,
     pub busy: u32,
     pub idle: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionInfo {
+    pub session_id: u32,
+    pub state: u32,
+    pub client_badge: u32,
+    pub ticks_since_active: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionStatus {
+    pub session_id: u32,
+    pub state: u32,
+    pub pending_responses: u32,
+    pub ticks_since_active: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSendResult {
+    pub ok: u32,
+    pub resp_pending: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionRecvResult {
+    pub ok: u32,
+    pub len: u32,
+    pub text: String,
+    pub hex: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,11 +156,35 @@ pub struct InputEvent {
     pub btn_mask: u32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FaultInjectResult {
+    pub result: u32,
+    pub ticks_to_recovery: u32,
+    pub trace_event_id: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrafficEvent {
+    pub seq: u64,
+    pub at_ms: u64,
+    pub opcode: u32,
+    pub opcode_name: String,
+    pub mr: [u32; 3],
+    pub reply_mr: [u32; 4],
+    pub shmem_in_len: u32,
+    pub shmem_out_len: u32,
+    pub ok: bool,
+    pub error: Option<String>,
+    pub duration_ms: u64,
+}
+
 // ── IPC client ────────────────────────────────────────────────────────────────
 
 pub struct CcClient {
     stream: UnixStream,
     session_id: u32,
+    traffic: VecDeque<TrafficEvent>,
+    next_traffic_seq: u64,
 }
 
 impl CcClient {
@@ -126,6 +195,8 @@ impl CcClient {
         let mut client = CcClient {
             stream,
             session_id: 0,
+            traffic: VecDeque::with_capacity(CC_TRAFFIC_MAX),
+            next_traffic_seq: 0,
         };
 
         // MSG_CC_CONNECT — establish session
@@ -144,6 +215,106 @@ impl CcClient {
     pub fn disconnect(&mut self) -> io::Result<()> {
         let _ = self.send_recv(MSG_CC_DISCONNECT, self.session_id, 0, 0, &[]);
         Ok(())
+    }
+
+    pub fn traffic_events(&self, limit: Option<usize>) -> Vec<TrafficEvent> {
+        let limit = limit.unwrap_or(128).min(CC_TRAFFIC_MAX);
+        let len = self.traffic.len();
+        self.traffic
+            .iter()
+            .skip(len.saturating_sub(limit))
+            .cloned()
+            .collect()
+    }
+
+    pub fn list_sessions(&mut self) -> io::Result<Vec<SessionInfo>> {
+        let reply = self.send_recv(MSG_CC_LIST, 8, 0, 0, &[])?;
+        let count = u32::from_le_bytes(reply[0..4].try_into().unwrap()) as usize;
+        let shmem = &reply[16..];
+        const ENTRY: usize = 16; // cc_session_info_t: 4 x u32
+        let mut out = Vec::with_capacity(count);
+        for i in 0..count.min(shmem.len() / ENTRY) {
+            let b = &shmem[i * ENTRY..];
+            out.push(SessionInfo {
+                session_id: u32::from_le_bytes(b[0..4].try_into().unwrap()),
+                state: u32::from_le_bytes(b[4..8].try_into().unwrap()),
+                client_badge: u32::from_le_bytes(b[8..12].try_into().unwrap()),
+                ticks_since_active: u32::from_le_bytes(b[12..16].try_into().unwrap()),
+            });
+        }
+        Ok(out)
+    }
+
+    pub fn session_status(&mut self, session_id: Option<u32>) -> io::Result<SessionStatus> {
+        let sid = session_id.unwrap_or(self.session_id);
+        let reply = self.send_recv(MSG_CC_STATUS, sid, 0, 0, &[])?;
+        let ok = u32::from_le_bytes(reply[0..4].try_into().unwrap());
+        if ok != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("cc_status err {ok}"),
+            ));
+        }
+        Ok(SessionStatus {
+            session_id: sid,
+            state: u32::from_le_bytes(reply[4..8].try_into().unwrap()),
+            pending_responses: u32::from_le_bytes(reply[8..12].try_into().unwrap()),
+            ticks_since_active: u32::from_le_bytes(reply[12..16].try_into().unwrap()),
+        })
+    }
+
+    pub fn session_send(&mut self, cmd_type: u32, command: &str) -> io::Result<SessionSendResult> {
+        let bytes = command.as_bytes();
+        if bytes.len() > CC_SHMEM_SIZE {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("command too large: {} bytes", bytes.len()),
+            ));
+        }
+        let reply = self.send_recv(
+            MSG_CC_SEND,
+            self.session_id,
+            cmd_type,
+            bytes.len() as u32,
+            bytes,
+        )?;
+        let ok = u32::from_le_bytes(reply[0..4].try_into().unwrap());
+        if ok != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("cc_send err {ok}"),
+            ));
+        }
+        Ok(SessionSendResult {
+            ok,
+            resp_pending: u32::from_le_bytes(reply[4..8].try_into().unwrap()),
+        })
+    }
+
+    pub fn session_recv(&mut self, max: u32) -> io::Result<SessionRecvResult> {
+        let max = max.min(CC_SHMEM_SIZE as u32);
+        let reply = self.send_recv(MSG_CC_RECV, self.session_id, max, 0, &[])?;
+        let ok = u32::from_le_bytes(reply[0..4].try_into().unwrap());
+        if ok != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("cc_recv err {ok}"),
+            ));
+        }
+        let len = u32::from_le_bytes(reply[4..8].try_into().unwrap());
+        let shmem = &reply[16..];
+        let end = (len as usize).min(shmem.len());
+        let bytes = &shmem[..end];
+        Ok(SessionRecvResult {
+            ok,
+            len,
+            text: String::from_utf8_lossy(bytes).into_owned(),
+            hex: bytes
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<Vec<_>>()
+                .join(" "),
+        })
     }
 
     pub fn list_guests(&mut self) -> io::Result<Vec<GuestInfo>> {
@@ -334,11 +505,34 @@ impl CcClient {
         if ok != 0 {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                format!("create_guest err {ok}: CC-PD create relay is not wired to VibeOS yet"),
+                format!(
+                    "create_guest err {ok}: current CC-PD did not complete the VibeOS create relay"
+                ),
             ));
         }
         Ok(GuestCreateResult {
             handle: u32::from_le_bytes(reply[4..8].try_into().unwrap()),
+        })
+    }
+
+    pub fn fault_inject(
+        &mut self,
+        slot_id: u32,
+        fault_kind: u32,
+        flags: u32,
+    ) -> io::Result<FaultInjectResult> {
+        let reply = self.send_recv(MSG_CC_FAULT_INJECT, slot_id, fault_kind, flags, &[])?;
+        let ok = u32::from_le_bytes(reply[0..4].try_into().unwrap());
+        if ok != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("fault_inject err {ok}"),
+            ));
+        }
+        Ok(FaultInjectResult {
+            result: u32::from_le_bytes(reply[4..8].try_into().unwrap()),
+            ticks_to_recovery: u32::from_le_bytes(reply[8..12].try_into().unwrap()),
+            trace_event_id: u32::from_le_bytes(reply[12..16].try_into().unwrap()),
         })
     }
 
@@ -352,6 +546,10 @@ impl CcClient {
         mr3: u32,
         shmem_in: &[u8],
     ) -> io::Result<[u8; CC_REPLY_SIZE]> {
+        let started_at = Instant::now();
+        let at_ms = now_ms();
+        let req_mr = [mr1, mr2, mr3];
+
         let mut req = [0u8; CC_REQ_SIZE];
         req[0..4].copy_from_slice(&opcode.to_le_bytes());
         req[4..8].copy_from_slice(&mr1.to_le_bytes());
@@ -362,13 +560,92 @@ impl CcClient {
             req[16..16 + copy_len].copy_from_slice(&shmem_in[..copy_len]);
         }
 
-        self.stream.write_all(&req).map_err(Self::cc_io_error)?;
+        if let Err(err) = self.stream.write_all(&req).map_err(Self::cc_io_error) {
+            let msg = err.to_string();
+            self.record_traffic(
+                opcode,
+                req_mr,
+                [0, 0, 0, 0],
+                copy_len as u32,
+                0,
+                Some(msg),
+                started_at,
+                at_ms,
+            );
+            return Err(err);
+        }
 
         let mut reply = [0u8; CC_REPLY_SIZE];
-        self.stream
+        if let Err(err) = self
+            .stream
             .read_exact(&mut reply)
-            .map_err(Self::cc_io_error)?;
+            .map_err(Self::cc_io_error)
+        {
+            let msg = err.to_string();
+            self.record_traffic(
+                opcode,
+                req_mr,
+                [0, 0, 0, 0],
+                copy_len as u32,
+                0,
+                Some(msg),
+                started_at,
+                at_ms,
+            );
+            return Err(err);
+        }
+
+        let reply_mr = [
+            u32::from_le_bytes(reply[0..4].try_into().unwrap()),
+            u32::from_le_bytes(reply[4..8].try_into().unwrap()),
+            u32::from_le_bytes(reply[8..12].try_into().unwrap()),
+            u32::from_le_bytes(reply[12..16].try_into().unwrap()),
+        ];
+        self.record_traffic(
+            opcode,
+            req_mr,
+            reply_mr,
+            copy_len as u32,
+            reply_shmem_len(opcode, reply_mr),
+            None,
+            started_at,
+            at_ms,
+        );
         Ok(reply)
+    }
+
+    fn record_traffic(
+        &mut self,
+        opcode: u32,
+        mr: [u32; 3],
+        reply_mr: [u32; 4],
+        shmem_in_len: u32,
+        shmem_out_len: u32,
+        error: Option<String>,
+        started_at: Instant,
+        at_ms: u64,
+    ) {
+        if self.traffic.len() == CC_TRAFFIC_MAX {
+            self.traffic.pop_front();
+        }
+
+        let has_ok_mr = opcode_has_ok_mr(opcode);
+        let ok = error.is_none() && (!has_ok_mr || reply_mr[0] == 0);
+
+        self.traffic.push_back(TrafficEvent {
+            seq: self.next_traffic_seq,
+            at_ms,
+            opcode,
+            opcode_name: opcode_name(opcode).into(),
+            mr,
+            reply_mr,
+            shmem_in_len,
+            shmem_out_len,
+            ok,
+            error,
+            duration_ms: millis_since(started_at),
+        });
+        self.next_traffic_seq = self.next_traffic_seq.wrapping_add(1);
     }
 
     fn cc_io_error(err: io::Error) -> io::Error {
@@ -381,4 +658,73 @@ impl CcClient {
             _ => err,
         }
     }
+}
+
+fn opcode_name(opcode: u32) -> &'static str {
+    match opcode {
+        MSG_CC_CONNECT => "CONNECT",
+        MSG_CC_DISCONNECT => "DISCONNECT",
+        MSG_CC_SEND => "SEND",
+        MSG_CC_RECV => "RECV",
+        MSG_CC_STATUS => "STATUS",
+        MSG_CC_LIST => "LIST",
+        MSG_CC_LIST_GUESTS => "LIST_GUESTS",
+        MSG_CC_LIST_DEVICES => "LIST_DEVICES",
+        MSG_CC_LIST_POLECATS => "LIST_POLECATS",
+        MSG_CC_GUEST_STATUS => "GUEST_STATUS",
+        MSG_CC_DEVICE_STATUS => "DEVICE_STATUS",
+        MSG_CC_ATTACH_FRAMEBUFFER => "ATTACH_FRAMEBUFFER",
+        MSG_CC_SEND_INPUT => "SEND_INPUT",
+        MSG_CC_SNAPSHOT => "SNAPSHOT",
+        MSG_CC_RESTORE => "RESTORE",
+        MSG_CC_LOG_STREAM => "LOG_STREAM",
+        MSG_CC_CREATE_GUEST => "CREATE_GUEST",
+        MSG_CC_FAULT_INJECT => "FAULT_INJECT",
+        _ => "UNKNOWN",
+    }
+}
+
+fn opcode_has_ok_mr(opcode: u32) -> bool {
+    matches!(
+        opcode,
+        MSG_CC_CONNECT
+            | MSG_CC_DISCONNECT
+            | MSG_CC_SEND
+            | MSG_CC_RECV
+            | MSG_CC_STATUS
+            | MSG_CC_LIST_POLECATS
+            | MSG_CC_GUEST_STATUS
+            | MSG_CC_DEVICE_STATUS
+            | MSG_CC_ATTACH_FRAMEBUFFER
+            | MSG_CC_SEND_INPUT
+            | MSG_CC_SNAPSHOT
+            | MSG_CC_RESTORE
+            | MSG_CC_LOG_STREAM
+            | MSG_CC_CREATE_GUEST
+            | MSG_CC_FAULT_INJECT
+    )
+}
+
+fn reply_shmem_len(opcode: u32, mr: [u32; 4]) -> u32 {
+    match opcode {
+        MSG_CC_RECV | MSG_CC_LOG_STREAM => mr[1].min(CC_SHMEM_SIZE as u32),
+        MSG_CC_LIST => mr[0].saturating_mul(16).min(CC_SHMEM_SIZE as u32),
+        MSG_CC_LIST_GUESTS => mr[0].saturating_mul(16).min(CC_SHMEM_SIZE as u32),
+        MSG_CC_LIST_DEVICES => mr[0].saturating_mul(16).min(CC_SHMEM_SIZE as u32),
+        MSG_CC_GUEST_STATUS if mr[0] == 0 => 32,
+        MSG_CC_DEVICE_STATUS if mr[0] == 0 => 16,
+        _ => 0,
+    }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u64::MAX as u128) as u64
+}
+
+fn millis_since(start: Instant) -> u64 {
+    start.elapsed().as_millis().min(u64::MAX as u128) as u64
 }

@@ -1,3 +1,4 @@
+import { Activity, Cpu } from 'lucide-react';
 import type { PoecatStatus } from '../types';
 
 interface Props { polecats: PoecatStatus | null }
@@ -24,9 +25,9 @@ export function AgentPool({ polecats }: Props) {
           { label: 'Idle',   value: polecats.idle,  color: 'text-emerald-400', border: 'border-emerald-500/30' },
         ].map(c => (
           <div key={c.label}
-            className={`rounded-xl border ${c.border} bg-os-surface p-5 text-center`}>
-            <p className={`font-mono text-3xl font-bold ${c.color}`}>{c.value}</p>
-            <p className="mt-1 font-mono text-xs uppercase tracking-widest text-os-muted">
+            className={`rounded-lg border ${c.border} bg-os-surface p-5 text-center`}>
+            <p className={`font-mono text-2xl font-bold tabular-nums ${c.color}`}>{c.value}</p>
+            <p className="mt-1 font-mono text-xs uppercase text-os-muted">
               {c.label}
             </p>
           </div>
@@ -34,9 +35,12 @@ export function AgentPool({ polecats }: Props) {
       </div>
 
       {/* Utilization bar */}
-      <div className="rounded-xl border border-os-border bg-os-surface p-5">
+      <div className="rounded-lg border border-os-border bg-os-surface p-5">
         <div className="mb-2 flex justify-between font-mono text-xs text-os-muted">
-          <span>Pool utilization</span>
+          <span className="flex items-center gap-2">
+            <Activity aria-hidden="true" className="h-3.5 w-3.5" />
+            Pool utilization
+          </span>
           <span>{usedPct}%</span>
         </div>
         <div className="h-3 overflow-hidden rounded-full bg-os-bg">
@@ -52,8 +56,9 @@ export function AgentPool({ polecats }: Props) {
 
       {/* Agent slots */}
       {polecats.total > 0 && (
-        <div className="rounded-xl border border-os-border bg-os-surface p-5">
-          <p className="mb-3 font-mono text-xs font-semibold uppercase tracking-widest text-os-muted">
+        <div className="rounded-lg border border-os-border bg-os-surface p-5">
+          <p className="mb-3 flex items-center gap-2 font-mono text-xs font-semibold uppercase text-os-muted">
+            <Cpu aria-hidden="true" className="h-3.5 w-3.5" />
             Slots
           </p>
           <div className="flex flex-wrap gap-2">

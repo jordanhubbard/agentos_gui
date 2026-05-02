@@ -5,12 +5,12 @@
 @tailwind utilities;
 
 :root {
-  --os-bg:      #0d0f14;
-  --os-surface: #131720;
-  --os-border:  #1e2333;
-  --os-accent:  #6366f1;
-  --os-text:    #e2e8f0;
-  --os-muted:   #4a5568;
+  --os-bg:      #101112;
+  --os-surface: #17191d;
+  --os-border:  #2a2f38;
+  --os-accent:  #2dd4bf;
+  --os-text:    #e7edf2;
+  --os-muted:   #7b8491;
 }
 
 body {
@@ -24,11 +24,23 @@ body {
   font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
 }
 
+.guest-terminal-host .xterm {
+  height: 100%;
+}
+
+.guest-terminal-host .xterm-viewport {
+  background-color: transparent !important;
+}
+
+.guest-terminal-host .xterm-screen {
+  max-width: 100%;
+}
+
 /* Custom scrollbar */
 ::-webkit-scrollbar       { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--os-border); border-radius: 2px; }
-::-webkit-scrollbar-thumb:hover { background: #2d3555; }
+::-webkit-scrollbar-thumb:hover { background: #3a424f; }
 
 /* Remove default focus rings, replace with accent */
 *:focus-visible {

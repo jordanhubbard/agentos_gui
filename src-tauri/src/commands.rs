@@ -3,8 +3,10 @@ use std::sync::{Arc, Mutex};
 use tauri::State;
 
 use crate::cc_ipc::{
-    CcClient, DeviceInfo, DeviceStatusInfo, GuestCreateRequest, GuestCreateResult, GuestInfo,
-    GuestStatus, InputEvent, PoecatStatus, SnapResult, CC_DEV_TYPE_COUNT,
+    CcClient, DeviceInfo, DeviceStatusInfo, FaultInjectResult, GuestCreateRequest,
+    GuestCreateResult, GuestInfo, GuestStatus, InputEvent, PoecatStatus, SessionInfo,
+    SessionRecvResult, SessionSendResult, SessionStatus, SnapResult, TrafficEvent,
+    CC_DEV_TYPE_COUNT,
 };
 
 type ClientCell = Arc<Mutex<Option<CcClient>>>;
@@ -134,6 +136,66 @@ pub async fn cc_is_connected(state: State<'_, AppState>) -> Result<bool, String>
             .lock()
             .map_err(|_| "client lock poisoned".to_string())?
             .is_some())
+    })
+    .await
+}
+
+// ── Session management ───────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn cc_list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionInfo>, String> {
+    with_client(state.client.clone(), |c: &mut CcClient| {
+        c.list_sessions().map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn cc_session_status(
+    session_id: Option<u32>,
+    state: State<'_, AppState>,
+) -> Result<SessionStatus, String> {
+    with_client(state.client.clone(), move |c: &mut CcClient| {
+        c.session_status(session_id).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn cc_session_send(
+    cmd_type: u32,
+    command: String,
+    state: State<'_, AppState>,
+) -> Result<SessionSendResult, String> {
+    with_client(state.client.clone(), move |c: &mut CcClient| {
+        c.session_send(cmd_type, &command).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn cc_session_recv(
+    max: u32,
+    state: State<'_, AppState>,
+) -> Result<SessionRecvResult, String> {
+    with_client(state.client.clone(), move |c: &mut CcClient| {
+        c.session_recv(max).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn cc_traffic_events(
+    limit: Option<usize>,
+    state: State<'_, AppState>,
+) -> Result<Vec<TrafficEvent>, String> {
+    let client = state.client.clone();
+    run_blocking(move || {
+        let guard = client
+            .lock()
+            .map_err(|_| "client lock poisoned".to_string())?;
+        let c = guard.as_ref().ok_or_else(|| "not connected".to_string())?;
+        Ok(c.traffic_events(limit))
     })
     .await
 }
@@ -283,6 +345,22 @@ pub async fn cc_attach_framebuffer(
 ) -> Result<u32, String> {
     with_client(state.client.clone(), move |c: &mut CcClient| {
         c.attach_framebuffer(guest_handle, fb_handle)
+            .map_err(|e| e.to_string())
+    })
+    .await
+}
+
+// ── Fault injection ──────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn cc_fault_inject(
+    slot_id: u32,
+    fault_kind: u32,
+    flags: u32,
+    state: State<'_, AppState>,
+) -> Result<FaultInjectResult, String> {
+    with_client(state.client.clone(), move |c: &mut CcClient| {
+        c.fault_inject(slot_id, fault_kind, flags)
             .map_err(|e| e.to_string())
     })
     .await

@@ -127,6 +127,18 @@ This application is an operational UI, not a marketing site. Keep layouts dense,
 clear, and task-oriented. Avoid decorative screens that delay access to guests,
 devices, logs, or agent status.
 
+The Guests view is the primary OS harness. It should expose guest lifecycle
+operations supported by the current CC-PD contract, render a VT100-compatible
+console with keyboard input through `MSG_CC_SEND_INPUT`, and show the selected
+guest's composition graph across `cc_pd`, VibeEngine, LogDrain, AgentPool, and
+device PDs. When protocol calls fail, display the CC error path plainly rather
+than masking it as a UI state.
+
+The Rust bridge records a bounded CC-PD traffic ring around every socket
+request/reply. Use that hook for live message inspection in the GUI. Do not claim
+to show internal PD-to-PD trace traffic unless agentOS exposes a CC relay for
+TraceRecorder or another explicit tracing contract.
+
 ## Testing And Quality Gates
 
 Before handing off frontend/backend changes, run the narrowest relevant checks:

@@ -74,11 +74,19 @@ Reply:    `mr[4](16) + shmem(4096)` = 4112 bytes
 
 See `src-tauri/src/cc_ipc.rs` and `cc_contract.h` in the agentOS repo.
 
+The Tauri bridge records a bounded in-memory traffic ring for every CC-PD
+request and reply. The Guests view renders that hook as a live topology and
+message traffic inspector so protocol failures are visible during OS bring-up.
+
 ## Tabs
 
 | Tab     | API calls                                   |
 |---------|---------------------------------------------|
-| Guests  | `MSG_CC_LIST_GUESTS`, `MSG_CC_GUEST_STATUS`, `MSG_CC_SNAPSHOT`, `MSG_CC_RESTORE` |
-| Devices | `MSG_CC_LIST_DEVICES` (all types)           |
-| Logs    | `MSG_CC_LOG_STREAM`                         |
+| Guests  | `MSG_CC_LIST_GUESTS`, `MSG_CC_GUEST_STATUS`, `MSG_CC_CREATE_GUEST`, `MSG_CC_SEND_INPUT`, `MSG_CC_SNAPSHOT`, `MSG_CC_RESTORE`, traffic inspector |
+| Devices | `MSG_CC_LIST_DEVICES`, `MSG_CC_DEVICE_STATUS` |
+| Logs    | `MSG_CC_LOG_STREAM` with slot / PD selectors |
 | Agents  | `MSG_CC_LIST_POLECATS`                      |
+| API     | `MSG_CC_SEND`, `MSG_CC_RECV`, `MSG_CC_STATUS`, `MSG_CC_LIST`, `MSG_CC_ATTACH_FRAMEBUFFER`, `MSG_CC_FAULT_INJECT` |
+
+Connection flow uses `MSG_CC_CONNECT` and `MSG_CC_DISCONNECT`. Guest launch and
+console input use `MSG_CC_CREATE_GUEST` and `MSG_CC_SEND_INPUT`.

@@ -66,6 +66,20 @@ test.describe('Guest list', () => {
       await expect(page.getByText('selected 0x00000002')).toBeVisible();
     });
 
+    test('shows the selected guest topology graph', async ({ page }) => {
+      await expect(page.getByText('Topology')).toBeVisible();
+      await expect(page.getByText('cc_pd', { exact: true })).toBeVisible();
+      await expect(page.getByText('vibe_engine', { exact: true })).toBeVisible();
+      await expect(page.getByText('guest_pd', { exact: true })).toBeVisible();
+      await expect(page.getByText('serial_pd', { exact: true })).toBeVisible();
+    });
+
+    test('shows recent CC message traffic', async ({ page }) => {
+      await expect(page.getByText('Message Traffic')).toBeVisible();
+      await expect(page.getByText('LIST_GUESTS')).toBeVisible();
+      await expect(page.getByText('LOG_STREAM')).toBeVisible();
+    });
+
     test('console Drain calls cc_log_stream and renders returned lines', async ({ page }) => {
       await page.getByRole('button', { name: 'Drain' }).click();
       const calls = await getCallsFor(page, 'cc_log_stream');
@@ -74,42 +88,19 @@ test.describe('Guest list', () => {
       expect((calls[0].args as any).pdId).toBe(0);
     });
 
-    test('console input buttons call cc_send_input for the selected guest', async ({ page }) => {
-      await page.getByRole('button', { name: 'Enter' }).click();
-      const calls = await getCallsFor(page, 'cc_send_input');
-      expect(calls.length).toBeGreaterThan(0);
-      expect((calls[0].args as any).handle).toBe(1);
-      expect((calls[0].args as any).event.keycode).toBe(0x28);
-    });
-
-    test('terminal key presses send raw console bytes', async ({ page }) => {
-      const terminal = page.getByRole('textbox', { name: 'Guest terminal' });
+    test('terminal key presses send raw console bytes from the selected guest terminal', async ({ page }) => {
+      const terminal = page.getByTestId('guest-terminal');
       await terminal.click();
-      await terminal.press('r');
-      await terminal.press('Enter');
+      await page.keyboard.type('r');
+      await page.keyboard.press('Enter');
+
+      await expect.poll(async () => (await getCallsFor(page, 'cc_send_input')).length)
+        .toBeGreaterThanOrEqual(2);
 
       const calls = await getCallsFor(page, 'cc_send_input');
       expect(calls.length).toBeGreaterThanOrEqual(2);
       expect((calls.at(-2)!.args as any).event.keycode).toBe(0x100 | 'r'.charCodeAt(0));
       expect((calls.at(-1)!.args as any).event.keycode).toBe(0x100 | 0x0d);
-    });
-
-    test('console input sends line input to the selected guest', async ({ page }) => {
-      const input = page.getByRole('textbox', { name: 'Console input' });
-      await input.fill('ubuntu');
-      await input.press('Enter');
-
-      const calls = await getCallsFor(page, 'cc_send_input');
-      const keycodes = calls.slice(-7).map(call => (call.args as any).event.keycode);
-      expect(keycodes).toEqual([
-        0x100 | 'u'.charCodeAt(0),
-        0x100 | 'b'.charCodeAt(0),
-        0x100 | 'u'.charCodeAt(0),
-        0x100 | 'n'.charCodeAt(0),
-        0x100 | 't'.charCodeAt(0),
-        0x100 | 'u'.charCodeAt(0),
-        0x100 | 0x0d,
-      ]);
       expect((calls.at(-1)!.args as any).handle).toBe(1);
     });
 
@@ -144,20 +135,20 @@ test.describe('Snapshot / restore flow', () => {
 
   test('snapshot success message appears', async ({ page }) => {
     await page.getByRole('button', { name: 'Snapshot' }).first().click();
-    await expect(page.getByText(/✓ snapshot/)).toBeVisible();
+    await expect(page.getByText(/snapshot 0x/)).toBeVisible();
   });
 
   test('Restore button becomes enabled after snapshot', async ({ page }) => {
-    const card = page.locator('.rounded-xl').filter({ hasText: 'Linux' });
+    const card = page.locator('.rounded-lg').filter({ hasText: 'Linux' });
     await card.getByRole('button', { name: 'Snapshot' }).click();
-    await expect(card.getByText(/✓ snapshot/)).toBeVisible();
+    await expect(card.getByText(/snapshot 0x/)).toBeVisible();
     await expect(card.getByRole('button', { name: 'Restore' })).toBeEnabled();
   });
 
   test('clicking Restore calls cc_restore', async ({ page }) => {
-    const card = page.locator('.rounded-xl').filter({ hasText: 'Linux' });
+    const card = page.locator('.rounded-lg').filter({ hasText: 'Linux' });
     await card.getByRole('button', { name: 'Snapshot' }).click();
-    await expect(card.getByText(/✓ snapshot/)).toBeVisible();
+    await expect(card.getByText(/snapshot 0x/)).toBeVisible();
     await card.getByRole('button', { name: 'Restore' }).click();
     const calls = await getCallsFor(page, 'cc_restore');
     expect(calls.length).toBeGreaterThan(0);
@@ -167,11 +158,11 @@ test.describe('Snapshot / restore flow', () => {
   });
 
   test('restore success message appears', async ({ page }) => {
-    const card = page.locator('.rounded-xl').filter({ hasText: 'Linux' });
+    const card = page.locator('.rounded-lg').filter({ hasText: 'Linux' });
     await card.getByRole('button', { name: 'Snapshot' }).click();
-    await expect(card.getByText(/✓ snapshot/)).toBeVisible();
+    await expect(card.getByText(/snapshot 0x/)).toBeVisible();
     await card.getByRole('button', { name: 'Restore' }).click();
-    await expect(card.getByText('✓ restore queued')).toBeVisible();
+    await expect(card.getByText('restore queued')).toBeVisible();
   });
 
   test('snapshot failure shows error message', async ({ page }) => {
@@ -182,6 +173,6 @@ test.describe('Snapshot / restore flow', () => {
     await connectApp(page);
     await expect(page.getByText('Linux')).toBeVisible();
     await page.getByRole('button', { name: 'Snapshot' }).first().click();
-    await expect(page.getByText(/✗/)).toBeVisible();
+    await expect(page.getByText(/error: snapshot failed/)).toBeVisible();
   });
 });

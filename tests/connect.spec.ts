@@ -10,7 +10,7 @@ test.describe('ConnectDialog', () => {
 
   test('shows connect dialog on initial load', async ({ page }) => {
     await expect(page.getByRole('heading', { name: 'agentOS' })).toBeVisible();
-    await expect(page.getByText('Connect to a running agentOS instance')).toBeVisible();
+    await expect(page.getByText('Socket path')).toBeVisible();
   });
 
   test('input has default socket path', async ({ page }) => {

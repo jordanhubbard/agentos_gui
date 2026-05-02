@@ -12,10 +12,10 @@ test.describe('Refresh', () => {
 
   test('refresh button triggers cc_list_guests', async ({ page }) => {
     const before = (await getCallsFor(page, 'cc_list_guests')).length;
-    await page.getByRole('button', { name: /refresh/ }).click();
+    await page.getByRole('button', { name: /refresh/i }).click();
     await expect(
       page.getByRole('button', { name: /refresh/i }),
-    ).not.toContainText('refreshing', { timeout: 3000 });
+    ).not.toContainText(/refreshing/i, { timeout: 3000 });
     const after = (await getCallsFor(page, 'cc_list_guests')).length;
     expect(after).toBeGreaterThan(before);
   });
@@ -23,9 +23,9 @@ test.describe('Refresh', () => {
   test('shows refreshing spinner text while loading', async ({ page }) => {
     // Just verify the button returns to idle state — the spinner is too brief
     // to reliably catch in a test
-    await page.getByRole('button', { name: /refresh/ }).click();
+    await page.getByRole('button', { name: /refresh/i }).click();
     await expect(
-      page.getByRole('button', { name: /refresh/ }),
+      page.getByRole('button', { name: /refresh/i }),
     ).toBeVisible({ timeout: 3000 });
   });
 
@@ -42,10 +42,10 @@ test.describe('Refresh', () => {
     const gBefore = (await getCallsFor(page, 'cc_list_guests')).length;
     const dBefore = (await getCallsFor(page, 'cc_list_devices')).length;
     const pBefore = (await getCallsFor(page, 'cc_list_polecats')).length;
-    await page.getByRole('button', { name: /refresh/ }).click();
+    await page.getByRole('button', { name: /refresh/i }).click();
     await expect(
       page.getByRole('button', { name: /refresh/i }),
-    ).not.toContainText('refreshing', { timeout: 3000 });
+    ).not.toContainText(/refreshing/i, { timeout: 3000 });
     expect((await getCallsFor(page, 'cc_list_guests')).length).toBeGreaterThan(gBefore);
     expect((await getCallsFor(page, 'cc_list_devices')).length).toBeGreaterThan(dBefore);
     expect((await getCallsFor(page, 'cc_list_polecats')).length).toBeGreaterThan(pBefore);

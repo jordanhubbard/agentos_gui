@@ -1,9 +1,11 @@
 import { useState } from 'react';
+import { AlertCircle, Camera, CheckCircle, RotateCcw } from 'lucide-react';
 import type { GuestInfo, SnapResult } from '../types';
 import {
-  GUEST_STATE, OS_TYPE, ARCH_TYPE, DEV_TYPE_NAME, DEV_TYPE_ICON,
+  GUEST_STATE, OS_TYPE, ARCH_TYPE, DEV_TYPE_NAME,
   guestStateDot, guestStateColor,
 } from '../types';
+import { DeviceIcon } from './DeviceIcon';
 
 interface Props {
   guest:      GuestInfo;
@@ -25,8 +27,8 @@ export function GuestCard({ guest, onSnapshot, onRestore, selected = false, onSe
     try {
       const s = await onSnapshot(guest.guest_handle);
       setSnap(s);
-      setMsg(`✓ snapshot 0x${s.snap_hi.toString(16)}:${s.snap_lo.toString(16)}`);
-    } catch (e) { setMsg(`✗ ${e}`); }
+      setMsg(`snapshot 0x${s.snap_hi.toString(16)}:${s.snap_lo.toString(16)}`);
+    } catch (e) { setMsg(`error: ${e}`); }
     finally { setBusy(false); }
   }
 
@@ -35,8 +37,8 @@ export function GuestCard({ guest, onSnapshot, onRestore, selected = false, onSe
     setBusy(true); setMsg(null);
     try {
       await onRestore(guest.guest_handle, snap.snap_lo, snap.snap_hi);
-      setMsg('✓ restore queued');
-    } catch (e) { setMsg(`✗ ${e}`); }
+      setMsg('restore queued');
+    } catch (e) { setMsg(`error: ${e}`); }
     finally { setBusy(false); }
   }
 
@@ -50,13 +52,12 @@ export function GuestCard({ guest, onSnapshot, onRestore, selected = false, onSe
           onSelect();
         }
       }}
-      className={`rounded-xl border bg-os-surface p-5 text-left transition
+      className={`rounded-lg border bg-os-surface p-5 text-left transition
                     hover:border-os-accent/40 ${
-                      selected ? 'border-os-accent/70 shadow-[0_0_0_1px_rgba(99,102,241,.25)]'
+                      selected ? 'border-os-accent/70 shadow-[0_0_0_1px_rgba(45,212,191,.25)]'
                       : 'border-os-border'
                     }`}
     >
-      {/* Header */}
       <div className="mb-4 flex items-start justify-between">
         <div className="flex items-center gap-2.5">
           <span className={`mt-0.5 h-2.5 w-2.5 flex-shrink-0 rounded-full ${guestStateDot(guest.state)}`} />
@@ -74,47 +75,50 @@ export function GuestCard({ guest, onSnapshot, onRestore, selected = false, onSe
         </span>
       </div>
 
-      {/* Meta row */}
       <div className="mb-4 flex gap-4 font-mono text-xs text-os-muted">
         <span>{ARCH_TYPE[guest.arch] ?? `arch-${guest.arch}`}</span>
         {devBits !== undefined && devBits > 0 && (
           <span className="flex gap-1.5">
             {[0, 1, 2, 3, 4].filter(i => devBits & (1 << i)).map(i => (
               <span key={i} title={DEV_TYPE_NAME[i]} className="text-os-text">
-                {DEV_TYPE_ICON[i]}
+                <DeviceIcon devType={i} className="h-3.5 w-3.5" />
               </span>
             ))}
           </span>
         )}
       </div>
 
-      {/* Actions */}
       <div className="flex gap-2">
         <button
           onClick={e => { e.stopPropagation(); doSnapshot(); }}
           disabled={busy}
-          className="flex-1 rounded-lg border border-os-border px-3 py-1.5
+          className="flex h-8 flex-1 items-center justify-center gap-2 rounded-lg border border-os-border px-3
                      font-mono text-xs text-os-muted transition
                      hover:border-os-accent/50 hover:text-os-accent
                      disabled:opacity-40"
         >
+          <Camera aria-hidden="true" className="h-3.5 w-3.5" />
           Snapshot
         </button>
         <button
           onClick={e => { e.stopPropagation(); doRestore(); }}
           disabled={busy || !snap}
-          className="flex-1 rounded-lg border border-os-border px-3 py-1.5
+          className="flex h-8 flex-1 items-center justify-center gap-2 rounded-lg border border-os-border px-3
                      font-mono text-xs text-os-muted transition
                      hover:border-sky-500/50 hover:text-sky-400
                      disabled:opacity-40"
         >
+          <RotateCcw aria-hidden="true" className="h-3.5 w-3.5" />
           Restore
         </button>
       </div>
 
       {msg && (
-        <p className={`mt-2 font-mono text-xs ${
-          msg.startsWith('✓') ? 'text-emerald-400' : 'text-red-400'}`}>
+        <p className={`mt-2 flex items-center gap-2 font-mono text-xs ${
+          msg.startsWith('error:') ? 'text-red-400' : 'text-emerald-400'}`}>
+          {msg.startsWith('error:')
+            ? <AlertCircle aria-hidden="true" className="h-3.5 w-3.5 flex-none" />
+            : <CheckCircle aria-hidden="true" className="h-3.5 w-3.5 flex-none" />}
           {msg}
         </p>
       )}

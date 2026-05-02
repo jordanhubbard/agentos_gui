@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { PlugZap } from 'lucide-react';
 
 const SOCK_PATH_KEY    = 'cc_sock_path';
 const SOCK_HISTORY_KEY = 'cc_sock_history';
@@ -44,23 +45,19 @@ export function ConnectDialog({ defaultPath, onConnect, error }: Props) {
 
   return (
     <div className="flex h-full items-center justify-center bg-os-bg">
-      <div className="w-[480px] rounded-2xl border border-os-border bg-os-surface p-8 shadow-2xl">
-        <div className="mb-8 flex items-center gap-3">
+      <div className="w-[480px] rounded-lg border border-os-border bg-os-surface p-8 shadow-2xl">
+        <div className="mb-7 flex items-center gap-3">
           <div className="flex gap-1.5">
             <span className="h-3 w-3 rounded-full bg-red-500/80" />
             <span className="h-3 w-3 rounded-full bg-amber-500/80" />
             <span className="h-3 w-3 rounded-full bg-emerald-500/80" />
           </div>
-          <h1 className="font-mono text-lg font-semibold tracking-tight text-os-text">
+          <h1 className="font-mono text-lg font-semibold text-os-text">
             agentOS
           </h1>
         </div>
 
-        <p className="mb-6 text-sm text-os-muted">
-          Connect to a running agentOS instance via the CC-PD Unix socket.
-        </p>
-
-        <label className="mb-1 block text-xs font-medium uppercase tracking-widest text-os-muted">
+        <label className="mb-1 block text-xs font-medium uppercase text-os-muted">
           Socket path
         </label>
         <input
@@ -102,18 +99,13 @@ export function ConnectDialog({ defaultPath, onConnect, error }: Props) {
 
         <button
           onClick={handleConnect}
-          className="w-full rounded-lg bg-os-accent px-4 py-2.5 font-mono text-sm
-                     font-semibold text-white transition hover:bg-os-accent/80
+          className="flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-os-accent px-4
+                     font-mono text-sm font-semibold text-slate-950 transition hover:bg-os-accent/80
                      active:scale-[0.98]"
         >
+          <PlugZap aria-hidden="true" className="h-4 w-4" />
           Connect
         </button>
-
-        <p className="mt-4 text-center font-mono text-xs text-os-muted">
-          Press <kbd className="rounded border border-os-border px-1 py-0.5">Enter</kbd> to connect
-          &nbsp;·&nbsp;
-          Set <code className="text-os-accent">CC_PD_SOCK</code> to override the default
-        </p>
       </div>
     </div>
   );

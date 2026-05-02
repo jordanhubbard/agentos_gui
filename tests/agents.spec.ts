@@ -23,17 +23,17 @@ test.describe('Agent pool', () => {
     });
 
     test('shows Total count card', async ({ page }) => {
-      const totalCard = page.locator('.rounded-xl').filter({ hasText: 'Total' });
+      const totalCard = page.locator('.rounded-lg').filter({ hasText: 'Total' });
       await expect(totalCard.getByText('8')).toBeVisible();
     });
 
     test('shows Busy count card', async ({ page }) => {
-      const busyCard = page.locator('.rounded-xl').filter({ hasText: 'Busy' });
+      const busyCard = page.locator('.rounded-lg').filter({ hasText: 'Busy' });
       await expect(busyCard.getByText('3')).toBeVisible();
     });
 
     test('shows Idle count card', async ({ page }) => {
-      const idleCard = page.locator('.rounded-xl').filter({ hasText: 'Idle' });
+      const idleCard = page.locator('.rounded-lg').filter({ hasText: 'Idle' });
       await expect(idleCard.getByText('5')).toBeVisible();
     });
 

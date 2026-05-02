@@ -7,6 +7,40 @@ export const DEFAULT_MOCKS: Record<string, unknown> = {
   cc_is_connected:       true,
   cc_get_sock_path:      'build/cc_pd.sock',
   cc_should_autoconnect: false,
+  cc_list_sessions: [
+    { session_id: 0, state: 0, client_badge: 0xa6e70002, ticks_since_active: 0 },
+  ],
+  cc_session_status:     { session_id: 0, state: 0, pending_responses: 0, ticks_since_active: 0 },
+  cc_session_send:       { ok: 0, resp_pending: 1 },
+  cc_session_recv:       { ok: 0, len: 0, text: '', hex: '' },
+  cc_traffic_events: [
+    {
+      seq: 1,
+      at_ms: 0,
+      opcode: 0x2607,
+      opcode_name: 'LIST_GUESTS',
+      mr: [16, 0, 0],
+      reply_mr: [2, 0, 0, 0],
+      shmem_in_len: 0,
+      shmem_out_len: 32,
+      ok: true,
+      error: null,
+      duration_ms: 1,
+    },
+    {
+      seq: 2,
+      at_ms: 0,
+      opcode: 0x2610,
+      opcode_name: 'LOG_STREAM',
+      mr: [0, 0, 0],
+      reply_mr: [0, 128, 0, 0],
+      shmem_in_len: 0,
+      shmem_out_len: 128,
+      ok: true,
+      error: null,
+      duration_ms: 2,
+    },
+  ],
   cc_list_guests: [
     { guest_handle: 1, state: 4, os_type: 1, arch: 1 },  // Linux aarch64 Running
     { guest_handle: 2, state: 3, os_type: 2, arch: 2 },  // FreeBSD x86_64 Booting
@@ -25,6 +59,7 @@ export const DEFAULT_MOCKS: Record<string, unknown> = {
   cc_send_input:         null,
   cc_device_status:      { dev_type: 0, dev_handle: 1, state: 1 },
   cc_attach_framebuffer: 1,
+  cc_fault_inject:       { result: 0, ticks_to_recovery: 0, trace_event_id: 0 },
 };
 
 export type MockOverrides = Partial<Record<string, unknown>>;

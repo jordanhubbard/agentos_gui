@@ -10,6 +10,11 @@ pub fn run() {
             commands::cc_connect,
             commands::cc_disconnect,
             commands::cc_is_connected,
+            commands::cc_list_sessions,
+            commands::cc_session_status,
+            commands::cc_session_send,
+            commands::cc_session_recv,
+            commands::cc_traffic_events,
             commands::cc_list_guests,
             commands::cc_guest_status,
             commands::cc_snapshot,
@@ -23,6 +28,7 @@ pub fn run() {
             commands::cc_should_autoconnect,
             commands::cc_device_status,
             commands::cc_attach_framebuffer,
+            commands::cc_fault_inject,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

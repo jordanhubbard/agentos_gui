@@ -1,9 +1,11 @@
 import { useState } from 'react';
+import { Play } from 'lucide-react';
 import type { GuestCreateRequest, GuestCreateResult } from '../types';
 import {
   CC_DEV_TYPE_BLOCK, CC_DEV_TYPE_NET, CC_DEV_TYPE_SERIAL,
-  DEV_TYPE_ICON, DEV_TYPE_NAME,
+  DEV_TYPE_NAME,
 } from '../types';
+import { DeviceIcon } from './DeviceIcon';
 
 interface Props {
   onCreate: (request: GuestCreateRequest) => Promise<GuestCreateResult>;
@@ -47,18 +49,19 @@ export function GuestLauncher({ onCreate, onCreated }: Props) {
   }
 
   return (
-    <section className="rounded-xl border border-os-border bg-os-surface p-4">
+    <section className="rounded-lg border border-os-border bg-os-surface p-4">
       <div className="mb-3 flex items-center justify-between gap-3">
-        <h3 className="font-mono text-xs font-semibold uppercase tracking-widest text-os-muted">
+        <h3 className="font-mono text-xs font-semibold uppercase text-os-muted">
           Launch
         </h3>
         <button
           onClick={submit}
           disabled={busy}
-          className="rounded-lg border border-os-accent/40 px-3 py-1.5 font-mono text-xs
+          className="flex h-8 items-center gap-2 rounded-lg border border-os-accent/40 px-3 font-mono text-xs
                      text-os-accent transition hover:border-os-accent hover:bg-os-accent/10
                      disabled:opacity-40"
         >
+          <Play aria-hidden="true" className="h-3.5 w-3.5" />
           Start
         </button>
       </div>
@@ -124,13 +127,13 @@ export function GuestLauncher({ onCreate, onCreated }: Props) {
                 key={devType}
                 onClick={() => toggleDevice(devType)}
                 title={DEV_TYPE_NAME[devType]}
-                className={`h-7 w-7 rounded border font-mono text-xs transition ${
+                className={`flex h-7 w-7 items-center justify-center rounded border transition ${
                   active
                     ? 'border-os-accent bg-os-accent/15 text-os-text'
                     : 'border-os-border text-os-muted hover:text-os-text'
                 }`}
               >
-                {DEV_TYPE_ICON[devType]}
+                <DeviceIcon devType={devType} className="h-3.5 w-3.5" />
               </button>
             );
           })}

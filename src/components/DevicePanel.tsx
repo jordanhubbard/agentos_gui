@@ -1,6 +1,8 @@
 import { useState } from 'react';
+import { Gauge } from 'lucide-react';
 import type { DeviceInfo } from '../types';
-import { DEV_TYPE_NAME, DEV_TYPE_ICON, DEV_STATE, devStateColor, CC_DEV_TYPE_COUNT } from '../types';
+import { DEV_TYPE_NAME, DEV_STATE, devStateColor, CC_DEV_TYPE_COUNT } from '../types';
+import { DeviceIcon } from './DeviceIcon';
 
 const DEV_COLORS: Record<number, string> = {
   0: 'border-violet-500/30 bg-violet-500/5',
@@ -58,8 +60,8 @@ export function DevicePanel({ devices, onStatus }: Props) {
         return (
           <div key={t}>
             <div className="mb-3 flex items-center gap-2">
-              <span className={`text-lg ${DEV_ICON_COLOR[t]}`}>{DEV_TYPE_ICON[t]}</span>
-              <h3 className="font-mono text-xs font-semibold uppercase tracking-widest text-os-muted">
+              <DeviceIcon devType={t} className={`h-4 w-4 ${DEV_ICON_COLOR[t]}`} />
+              <h3 className="font-mono text-xs font-semibold uppercase text-os-muted">
                 {DEV_TYPE_NAME[t] ?? `type-${t}`}
               </h3>
               <span className="ml-auto font-mono text-xs text-os-muted">{list.length}</span>
@@ -68,9 +70,9 @@ export function DevicePanel({ devices, onStatus }: Props) {
               {list.map(d => (
                 <div
                   key={d.dev_handle}
-                  className={`rounded-xl border p-4 ${DEV_COLORS[t] ?? 'border-os-border bg-os-surface'}`}
+                  className={`rounded-lg border p-4 ${DEV_COLORS[t] ?? 'border-os-border bg-os-surface'}`}
                 >
-                  <p className={`mb-1 text-2xl ${DEV_ICON_COLOR[t]}`}>{DEV_TYPE_ICON[t]}</p>
+                  <DeviceIcon devType={t} className={`mb-2 h-5 w-5 ${DEV_ICON_COLOR[t]}`} />
                   <p className="font-mono text-xs text-os-text">
                     handle 0x{d.dev_handle.toString(16).padStart(4, '0')}
                   </p>
@@ -79,9 +81,10 @@ export function DevicePanel({ devices, onStatus }: Props) {
                   </p>
                   <button
                     onClick={() => probe(d)}
-                    className="mt-3 rounded border border-os-border px-2 py-1 font-mono text-xs
+                    className="mt-3 flex h-7 items-center gap-1.5 rounded border border-os-border px-2 font-mono text-xs
                                text-os-muted transition hover:border-os-accent/50 hover:text-os-accent"
                   >
+                    <Gauge aria-hidden="true" className="h-3.5 w-3.5" />
                     Probe
                   </button>
                   {messages[`${d.dev_type}:${d.dev_handle}`] && (

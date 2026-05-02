@@ -40,6 +40,12 @@ test.describe('Sidebar navigation', () => {
     await expect(page.locator('header h2')).toHaveText('agents');
   });
 
+  test('clicking API tab shows the CC API panel', async ({ page }) => {
+    await switchTab(page, 'API');
+    await expect(page.locator('header h2')).toHaveText('api');
+    await expect(page.getByText('CC API')).toBeVisible();
+  });
+
   test('active tab button has accent styling', async ({ page }) => {
     // The active tab should have os-accent class applied
     const guestsBtn = page.getByRole('button', { name: 'Guests' });
