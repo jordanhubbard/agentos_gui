@@ -20,6 +20,9 @@ pub fn run() {
             commands::cc_snapshot,
             commands::cc_restore,
             commands::cc_create_guest,
+            commands::cc_suspend_guest,
+            commands::cc_resume_guest,
+            commands::cc_destroy_guest,
             commands::cc_list_devices,
             commands::cc_list_polecats,
             commands::cc_log_stream,
@@ -29,6 +32,10 @@ pub fn run() {
             commands::cc_device_status,
             commands::cc_attach_framebuffer,
             commands::cc_fault_inject,
+            commands::cc_trace_start,
+            commands::cc_trace_stop,
+            commands::cc_trace_query,
+            commands::cc_trace_dump,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

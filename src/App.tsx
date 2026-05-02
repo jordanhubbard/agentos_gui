@@ -15,8 +15,10 @@ import { TopologyGraph } from './components/TopologyGraph';
 export default function App() {
   const {
     state, connect, disconnect, refresh, fetchLogs, snapshot, restore,
-    sendInput, deviceStatus, createGuest, listSessions, sessionStatus,
-    sessionSend, sessionRecv, attachFramebuffer, faultInject, clearLogs,
+    suspendGuest, resumeGuest, destroyGuest, sendInput, deviceStatus,
+    createGuest, listSessions, sessionStatus, sessionSend, sessionRecv,
+    attachFramebuffer, faultInject, traceStart, traceStop, traceQuery,
+    traceDump, clearLogs,
   } =
     useAgentOS();
   const [tab, setTab] = useState<Tab>('guests');
@@ -129,6 +131,21 @@ export default function App() {
                         onSelect={() => setSelectedGuestHandle(g.guest_handle)}
                         onSnapshot={snapshot}
                         onRestore={restore}
+                        onSuspend={async handle => {
+                          const result = await suspendGuest(handle);
+                          await refresh();
+                          return result;
+                        }}
+                        onResume={async handle => {
+                          const result = await resumeGuest(handle);
+                          await refresh();
+                          return result;
+                        }}
+                        onDestroy={async handle => {
+                          const result = await destroyGuest(handle);
+                          await refresh();
+                          return result;
+                        }}
                       />
                     ))}
                   </div>
@@ -138,6 +155,7 @@ export default function App() {
                       devices={state.devices}
                       sessions={state.sessions}
                       traffic={state.traffic}
+                      traceEvents={state.traceEvents}
                     />
                     <GuestConsole
                       guest={selectedGuest}
@@ -175,6 +193,12 @@ export default function App() {
               onSessionRecv={sessionRecv}
               onAttachFramebuffer={attachFramebuffer}
               onFaultInject={faultInject}
+              traceStatus={state.traceStatus}
+              traceEvents={state.traceEvents}
+              onTraceStart={traceStart}
+              onTraceStop={traceStop}
+              onTraceQuery={traceQuery}
+              onTraceDump={traceDump}
             />
           )}
         </div>

@@ -1,5 +1,5 @@
 import { Activity, GitBranch, Layers, Network, Radio, Server, Shield } from 'lucide-react';
-import type { DeviceInfo, GuestInfo, SessionInfo, TrafficEvent } from '../types';
+import type { DeviceInfo, GuestInfo, SessionInfo, TraceEntry, TrafficEvent } from '../types';
 import {
   DEV_TYPE_NAME,
   CC_DEV_TYPE_BLOCK,
@@ -15,6 +15,7 @@ interface Props {
   devices: DeviceInfo[];
   sessions: SessionInfo[];
   traffic: TrafficEvent[];
+  traceEvents: TraceEntry[];
 }
 
 type NodeKind = 'host' | 'relay' | 'service' | 'guest' | 'device';
@@ -51,12 +52,15 @@ const SERVICE_OPS: Record<string, string[]> = {
   logs: ['LOG_STREAM'],
   agents: ['LIST_POLECATS'],
   session: ['CONNECT', 'DISCONNECT', 'LIST', 'STATUS', 'SEND', 'RECV'],
+  trace: ['TRACE_START', 'TRACE_STOP', 'TRACE_QUERY', 'TRACE_DUMP'],
 };
 
-export function TopologyGraph({ guest, devices, sessions, traffic }: Props) {
+export function TopologyGraph({ guest, devices, sessions, traffic, traceEvents }: Props) {
   const recent = traffic.slice(-32);
   const hasRecent = (names: string[]) =>
     recent.some(event => names.includes(event.opcode_name));
+  const hasTraceTo = (pdId: number) =>
+    traceEvents.slice(-64).some(event => event.to_pd === pdId || event.from_pd === pdId);
 
   const deviceTypes = selectedDeviceTypes(guest, devices);
   const nodes: GraphNode[] = [
@@ -90,6 +94,14 @@ export function TopologyGraph({ guest, devices, sessions, traffic }: Props) {
       detail: 'workers',
       x: 78,
       y: 18,
+      kind: 'service',
+    },
+    {
+      id: 'trace',
+      label: 'trace_recorder',
+      detail: `${traceEvents.length} event${traceEvents.length === 1 ? '' : 's'}`,
+      x: 78,
+      y: 67,
       kind: 'service',
     },
     {
@@ -135,8 +147,9 @@ export function TopologyGraph({ guest, devices, sessions, traffic }: Props) {
     { from: 'cc', to: 'agents', label: 'pool', active: hasRecent(SERVICE_OPS.agents) },
     { from: 'cc', to: 'log', label: 'logs', active: hasRecent(SERVICE_OPS.logs) },
     { from: 'cc', to: 'guest', label: 'input', active: hasRecent(SERVICE_OPS.guest) },
+    { from: 'cc', to: 'trace', label: 'trace', active: hasRecent(SERVICE_OPS.trace) || traceEvents.length > 0 },
     { from: 'vibe', to: 'eventbus', label: 'events', active: hasRecent(SERVICE_OPS.vibe) },
-    { from: 'vibe', to: 'guest', label: 'compose', active: hasRecent(SERVICE_OPS.vibe) },
+    { from: 'vibe', to: 'guest', label: 'compose', active: hasRecent(SERVICE_OPS.vibe) || hasTraceTo(12) },
     ...deviceTypes.map(devType => ({
       from: 'guest',
       to: `dev-${devType}`,
@@ -229,6 +242,31 @@ export function TopologyGraph({ guest, devices, sessions, traffic }: Props) {
                 </span>
                 <span className="text-right text-os-muted">
                   mr0={event.reply_mr[0]}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="mt-3 max-h-40 overflow-y-auto rounded border border-os-border">
+          {traceEvents.length === 0 ? (
+            <p className="px-3 py-2 font-mono text-xs text-os-muted">No internal trace events</p>
+          ) : (
+            traceEvents.slice(-8).reverse().map((event, index) => (
+              <div
+                key={`${event.seq_lo}-${index}`}
+                className="grid grid-cols-[4rem_minmax(7rem,1fr)_minmax(7rem,1fr)_5rem] gap-2 border-b
+                           border-os-border px-3 py-2 font-mono text-xs last:border-b-0"
+              >
+                <span className="text-os-muted">#{event.seq_lo}</span>
+                <span className="text-os-text">
+                  pd{event.from_pd}
+                </span>
+                <span className="text-os-text">
+                  pd{event.to_pd}
+                </span>
+                <span className="text-right text-os-muted">
+                  0x{event.opcode.toString(16)}
                 </span>
               </div>
             ))

@@ -16,6 +16,8 @@ test.describe('CC API panel', () => {
     await expect(page.getByText('RECV', { exact: true })).toBeVisible();
     await expect(page.getByText('ATTACH_FRAMEBUFFER', { exact: true })).toBeVisible();
     await expect(page.getByText('FAULT_INJECT', { exact: true })).toBeVisible();
+    await expect(page.getByText('SUSPEND_GUEST', { exact: true })).toBeVisible();
+    await expect(page.getByText('TRACE_DUMP', { exact: true })).toBeVisible();
   });
 
   test('Status probes the selected session', async ({ page }) => {
@@ -56,5 +58,21 @@ test.describe('CC API panel', () => {
       faultKind: 7,
       flags: 1,
     });
+  });
+
+  test('TraceRecorder controls call the trace relay surface', async ({ page }) => {
+    await page.getByLabel('Trace flags').fill('1');
+    await page.getByLabel('Trace limit').fill('64');
+    await page.getByRole('button', { name: 'Start' }).click();
+    await page.getByRole('button', { name: 'Query' }).click();
+    await page.getByRole('button', { name: 'Dump' }).click();
+    await page.getByRole('button', { name: 'Stop' }).click();
+
+    const starts = await getCallsFor(page, 'cc_trace_start');
+    const dumps = await getCallsFor(page, 'cc_trace_dump');
+    expect((starts.at(-1)!.args as any).flags).toBe(1);
+    expect((dumps.at(-1)!.args as any).maxEvents).toBe(64);
+    await expect(page.getByText('TraceRecorder')).toBeVisible();
+    await expect(page.getByText('linux_vmm')).toBeVisible();
   });
 });

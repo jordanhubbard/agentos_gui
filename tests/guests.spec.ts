@@ -56,6 +56,35 @@ test.describe('Guest list', () => {
       await expect(page.getByRole('button', { name: 'Snapshot' })).toHaveCount(2);
     });
 
+    test('guest lifecycle buttons call suspend resume and destroy relays', async ({ page }) => {
+      const linuxCard = page.locator('.rounded-lg').filter({ hasText: 'Linux' }).first();
+      await linuxCard.getByRole('button', { name: 'Suspend' }).click();
+      await expect.poll(async () => (await getCallsFor(page, 'cc_suspend_guest')).length)
+        .toBeGreaterThan(0);
+      await expect(linuxCard.getByRole('button', { name: 'Destroy' })).toBeEnabled();
+      await linuxCard.getByRole('button', { name: 'Destroy' }).click();
+      await expect.poll(async () => (await getCallsFor(page, 'cc_destroy_guest')).length)
+        .toBeGreaterThan(0);
+      const suspendCalls = await getCallsFor(page, 'cc_suspend_guest');
+      const destroyCalls = await getCallsFor(page, 'cc_destroy_guest');
+
+      const suspendedGuestMocks = {
+        cc_list_guests: [
+          { guest_handle: 1, state: 5, os_type: 1, arch: 1 },
+        ],
+        cc_guest_status: { guest_handle: 1, state: 5, os_type: 1, arch: 1, device_flags: 7 },
+      };
+      await setupTauriMock(page, suspendedGuestMocks);
+      await page.reload();
+      await connectApp(page);
+      const suspendedCard = page.locator('.rounded-lg').filter({ hasText: 'Linux' }).first();
+      await suspendedCard.getByRole('button', { name: 'Resume' }).click();
+
+      expect(suspendCalls.length).toBeGreaterThan(0);
+      expect(destroyCalls.length).toBeGreaterThan(0);
+      expect((await getCallsFor(page, 'cc_resume_guest')).length).toBeGreaterThan(0);
+    });
+
     test('Restore button is disabled before snapshot', async ({ page }) => {
       const restoreButtons = page.getByRole('button', { name: 'Restore' });
       await expect(restoreButtons.first()).toBeDisabled();

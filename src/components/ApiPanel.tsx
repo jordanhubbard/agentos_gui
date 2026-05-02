@@ -16,6 +16,9 @@ import type {
   SessionRecvResult,
   SessionSendResult,
   SessionStatus,
+  TraceDumpResult,
+  TraceEntry,
+  TraceStatus,
 } from '../types';
 import {
   CC_API_SURFACE,
@@ -27,6 +30,7 @@ import {
   DEV_TYPE_NAME,
   GUEST_STATE,
   OS_TYPE,
+  TRACE_PD_NAME,
 } from '../types';
 
 interface Props {
@@ -40,6 +44,12 @@ interface Props {
   onSessionRecv: (max: number) => Promise<SessionRecvResult>;
   onAttachFramebuffer: (guestHandle: number, fbHandle: number) => Promise<number>;
   onFaultInject: (slotId: number, faultKind: number, flags: number) => Promise<FaultInjectResult>;
+  traceStatus: TraceStatus | null;
+  traceEvents: TraceEntry[];
+  onTraceStart: (flags: number) => Promise<TraceStatus>;
+  onTraceStop: () => Promise<TraceStatus>;
+  onTraceQuery: () => Promise<TraceStatus>;
+  onTraceDump: (maxEvents: number) => Promise<TraceDumpResult>;
 }
 
 const CMD_TYPES = [
@@ -59,6 +69,12 @@ export function ApiPanel({
   onSessionRecv,
   onAttachFramebuffer,
   onFaultInject,
+  traceStatus,
+  traceEvents,
+  onTraceStart,
+  onTraceStop,
+  onTraceQuery,
+  onTraceDump,
 }: Props) {
   const [sessionRows, setSessionRows] = useState<SessionInfo[]>(sessions);
   const [status, setStatus] = useState<SessionStatus | null>(sessionStatus);
@@ -74,6 +90,10 @@ export function ApiPanel({
   const [faultKind, setFaultKind] = useState(0);
   const [faultFlags, setFaultFlags] = useState(0);
   const [faultResult, setFaultResult] = useState<FaultInjectResult | null>(null);
+  const [traceFlags, setTraceFlags] = useState(1);
+  const [traceLimit, setTraceLimit] = useState(128);
+  const [traceState, setTraceState] = useState<TraceStatus | null>(traceStatus);
+  const [traceRows, setTraceRows] = useState<TraceEntry[]>(traceEvents);
   const [message, setMessage] = useState<string | null>(null);
 
   const fbDevices = useMemo(
@@ -83,6 +103,8 @@ export function ApiPanel({
 
   useEffect(() => setSessionRows(sessions), [sessions]);
   useEffect(() => setStatus(sessionStatus), [sessionStatus]);
+  useEffect(() => setTraceState(traceStatus), [traceStatus]);
+  useEffect(() => setTraceRows(traceEvents), [traceEvents]);
   useEffect(() => {
     if (guests.length > 0 && !guests.some(g => g.guest_handle === guestHandle)) {
       setGuestHandle(guests[0].guest_handle);
@@ -157,6 +179,50 @@ export function ApiPanel({
     }
   }
 
+  async function startTrace() {
+    setMessage(null);
+    try {
+      setTraceState(await onTraceStart(traceFlags));
+      setTraceRows([]);
+    } catch (e) {
+      setMessage(String(e));
+    }
+  }
+
+  async function stopTrace() {
+    setMessage(null);
+    try {
+      setTraceState(await onTraceStop());
+    } catch (e) {
+      setMessage(String(e));
+    }
+  }
+
+  async function queryTrace() {
+    setMessage(null);
+    try {
+      setTraceState(await onTraceQuery());
+    } catch (e) {
+      setMessage(String(e));
+    }
+  }
+
+  async function dumpTrace() {
+    setMessage(null);
+    try {
+      const result = await onTraceDump(traceLimit);
+      setTraceState({
+        ok: result.ok,
+        event_count: result.events_written,
+        bytes_used: result.bytes_written,
+        overflow_count: result.overflow_count,
+      });
+      setTraceRows(result.events);
+    } catch (e) {
+      setMessage(String(e));
+    }
+  }
+
   return (
     <div className="grid gap-5 xl:grid-cols-[minmax(22rem,32rem)_1fr]">
       <div className="space-y-5">
@@ -217,6 +283,71 @@ export function ApiPanel({
                   {CC_SESSION_STATE[row.state] ?? `state-${row.state}`}
                 </span>
                 <span className="text-right text-os-muted">{row.ticks_since_active}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="rounded-lg border border-os-border bg-os-surface p-4">
+          <h3 className="mb-3 font-mono text-xs font-semibold uppercase text-os-muted">
+            TraceRecorder
+          </h3>
+          <div className="mb-3 grid gap-2 md:grid-cols-[1fr_1fr_auto_auto_auto_auto]">
+            <NumberField label="Trace flags" value={traceFlags} onChange={setTraceFlags} />
+            <NumberField label="Trace limit" value={traceLimit} onChange={setTraceLimit} />
+            <button
+              onClick={startTrace}
+              className="h-9 rounded border border-os-accent/50 px-3 font-mono text-xs text-os-accent
+                         transition hover:bg-os-accent/10"
+            >
+              Start
+            </button>
+            <button
+              onClick={stopTrace}
+              className="h-9 rounded border border-os-border px-3 font-mono text-xs text-os-muted
+                         transition hover:border-os-accent/50 hover:text-os-accent"
+            >
+              Stop
+            </button>
+            <button
+              onClick={queryTrace}
+              className="h-9 rounded border border-os-border px-3 font-mono text-xs text-os-muted
+                         transition hover:border-os-accent/50 hover:text-os-accent"
+            >
+              Query
+            </button>
+            <button
+              onClick={dumpTrace}
+              className="h-9 rounded border border-os-border px-3 font-mono text-xs text-os-muted
+                         transition hover:border-os-accent/50 hover:text-os-accent"
+            >
+              Dump
+            </button>
+          </div>
+          {traceState && (
+            <div className="mb-3 grid grid-cols-3 gap-2 font-mono text-xs">
+              <Metric label="events" value={String(traceState.event_count)} />
+              <Metric label="bytes" value={String(traceState.bytes_used)} />
+              <Metric label="overflow" value={String(traceState.overflow_count)} />
+            </div>
+          )}
+          <div className="max-h-52 overflow-y-auto rounded border border-os-border">
+            {traceRows.length === 0 ? (
+              <p className="px-3 py-2 font-mono text-xs text-os-muted">No trace events</p>
+            ) : traceRows.slice(-12).reverse().map((event, index) => (
+              <div
+                key={`${event.seq_lo}-${index}`}
+                className="grid grid-cols-[4rem_minmax(7rem,1fr)_minmax(7rem,1fr)_5rem] gap-2 border-b
+                           border-os-border px-3 py-2 font-mono text-xs last:border-b-0"
+              >
+                <span className="text-os-muted">#{event.seq_lo}</span>
+                <span className="truncate text-os-text">
+                  {TRACE_PD_NAME[event.from_pd] ?? `pd${event.from_pd}`}
+                </span>
+                <span className="truncate text-os-text">
+                  {TRACE_PD_NAME[event.to_pd] ?? `pd${event.to_pd}`}
+                </span>
+                <span className="text-right text-os-muted">0x{event.opcode.toString(16)}</span>
               </div>
             ))}
           </div>

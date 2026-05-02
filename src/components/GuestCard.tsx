@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { AlertCircle, Camera, CheckCircle, RotateCcw } from 'lucide-react';
-import type { GuestInfo, SnapResult } from '../types';
+import { AlertCircle, Camera, CheckCircle, PauseCircle, PlayCircle, Power, RotateCcw } from 'lucide-react';
+import type { GuestInfo, GuestLifecycleResult, SnapResult } from '../types';
 import {
   GUEST_STATE, OS_TYPE, ARCH_TYPE, DEV_TYPE_NAME,
   guestStateDot, guestStateColor,
@@ -11,16 +11,31 @@ interface Props {
   guest:      GuestInfo;
   onSnapshot: (handle: number) => Promise<SnapResult>;
   onRestore:  (handle: number, lo: number, hi: number) => Promise<void>;
+  onSuspend:  (handle: number) => Promise<GuestLifecycleResult>;
+  onResume:   (handle: number) => Promise<GuestLifecycleResult>;
+  onDestroy:  (handle: number) => Promise<GuestLifecycleResult>;
   selected?: boolean;
   onSelect?: () => void;
 }
 
-export function GuestCard({ guest, onSnapshot, onRestore, selected = false, onSelect }: Props) {
+export function GuestCard({
+  guest,
+  onSnapshot,
+  onRestore,
+  onSuspend,
+  onResume,
+  onDestroy,
+  selected = false,
+  onSelect,
+}: Props) {
   const [snap, setSnap]   = useState<SnapResult | null>(null);
   const [busy, setBusy]   = useState(false);
   const [msg, setMsg]     = useState<string | null>(null);
 
   const devBits = (guest as any).device_flags as number | undefined;
+  const isRunning = guest.state === 4;
+  const isSuspended = guest.state === 5;
+  const isDead = guest.state === 6;
 
   async function doSnapshot() {
     setBusy(true); setMsg(null);
@@ -38,6 +53,19 @@ export function GuestCard({ guest, onSnapshot, onRestore, selected = false, onSe
     try {
       await onRestore(guest.guest_handle, snap.snap_lo, snap.snap_hi);
       setMsg('restore queued');
+    } catch (e) { setMsg(`error: ${e}`); }
+    finally { setBusy(false); }
+  }
+
+  async function doLifecycle(
+    action: 'suspend' | 'resume' | 'destroy',
+    call: (handle: number) => Promise<GuestLifecycleResult>,
+  ) {
+    setBusy(true); setMsg(null);
+    try {
+      const result = await call(guest.guest_handle);
+      const state = GUEST_STATE[result.state] ?? `state-${result.state}`;
+      setMsg(`${action} ok: ${state}`);
     } catch (e) { setMsg(`error: ${e}`); }
     finally { setBusy(false); }
   }
@@ -88,10 +116,10 @@ export function GuestCard({ guest, onSnapshot, onRestore, selected = false, onSe
         )}
       </div>
 
-      <div className="flex gap-2">
+      <div className="grid gap-2 sm:grid-cols-2">
         <button
           onClick={e => { e.stopPropagation(); doSnapshot(); }}
-          disabled={busy}
+          disabled={busy || isDead}
           className="flex h-8 flex-1 items-center justify-center gap-2 rounded-lg border border-os-border px-3
                      font-mono text-xs text-os-muted transition
                      hover:border-os-accent/50 hover:text-os-accent
@@ -102,7 +130,7 @@ export function GuestCard({ guest, onSnapshot, onRestore, selected = false, onSe
         </button>
         <button
           onClick={e => { e.stopPropagation(); doRestore(); }}
-          disabled={busy || !snap}
+          disabled={busy || !snap || isDead}
           className="flex h-8 flex-1 items-center justify-center gap-2 rounded-lg border border-os-border px-3
                      font-mono text-xs text-os-muted transition
                      hover:border-sky-500/50 hover:text-sky-400
@@ -110,6 +138,38 @@ export function GuestCard({ guest, onSnapshot, onRestore, selected = false, onSe
         >
           <RotateCcw aria-hidden="true" className="h-3.5 w-3.5" />
           Restore
+        </button>
+        <button
+          onClick={e => { e.stopPropagation(); doLifecycle('suspend', onSuspend); }}
+          disabled={busy || !isRunning}
+          className="flex h-8 items-center justify-center gap-2 rounded-lg border border-os-border px-3
+                     font-mono text-xs text-os-muted transition
+                     hover:border-sky-500/50 hover:text-sky-400
+                     disabled:opacity-40"
+        >
+          <PauseCircle aria-hidden="true" className="h-3.5 w-3.5" />
+          Suspend
+        </button>
+        <button
+          onClick={e => { e.stopPropagation(); doLifecycle('resume', onResume); }}
+          disabled={busy || !isSuspended}
+          className="flex h-8 items-center justify-center gap-2 rounded-lg border border-os-border px-3
+                     font-mono text-xs text-os-muted transition
+                     hover:border-emerald-500/50 hover:text-emerald-400
+                     disabled:opacity-40"
+        >
+          <PlayCircle aria-hidden="true" className="h-3.5 w-3.5" />
+          Resume
+        </button>
+        <button
+          onClick={e => { e.stopPropagation(); doLifecycle('destroy', onDestroy); }}
+          disabled={busy || isDead}
+          className="flex h-8 items-center justify-center gap-2 rounded-lg border border-red-500/35 px-3
+                     font-mono text-xs text-red-300 transition hover:bg-red-500/10
+                     disabled:opacity-40"
+        >
+          <Power aria-hidden="true" className="h-3.5 w-3.5" />
+          Destroy
         </button>
       </div>
 

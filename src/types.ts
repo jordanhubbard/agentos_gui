@@ -68,6 +68,11 @@ export interface GuestCreateResult {
   handle: number;
 }
 
+export interface GuestLifecycleResult {
+  ok:    number;
+  state: number;
+}
+
 export interface InputEvent {
   event_type: number;
   keycode:    number;
@@ -80,6 +85,30 @@ export interface FaultInjectResult {
   result:            number;
   ticks_to_recovery: number;
   trace_event_id:    number;
+}
+
+export interface TraceStatus {
+  ok:             number;
+  event_count:    number;
+  bytes_used:     number;
+  overflow_count: number;
+}
+
+export interface TraceEntry {
+  timestamp_ns: number;
+  from_pd:      number;
+  to_pd:        number;
+  channel:      number;
+  opcode:       number;
+  seq_lo:       number;
+}
+
+export interface TraceDumpResult {
+  ok:             number;
+  events_written: number;
+  bytes_written:  number;
+  overflow_count: number;
+  events:         TraceEntry[];
 }
 
 export interface TrafficEvent {
@@ -187,7 +216,24 @@ export const CC_API_SURFACE = [
   { opcode: '0x2610', name: 'LOG_STREAM', surface: 'logs' },
   { opcode: '0x2611', name: 'CREATE_GUEST', surface: 'guests' },
   { opcode: '0x2612', name: 'FAULT_INJECT', surface: 'api' },
+  { opcode: '0x2613', name: 'SUSPEND_GUEST', surface: 'guests' },
+  { opcode: '0x2614', name: 'RESUME_GUEST', surface: 'guests' },
+  { opcode: '0x2615', name: 'DESTROY_GUEST', surface: 'guests' },
+  { opcode: '0x2616', name: 'TRACE_START', surface: 'trace' },
+  { opcode: '0x2617', name: 'TRACE_STOP', surface: 'trace' },
+  { opcode: '0x2618', name: 'TRACE_QUERY', surface: 'trace' },
+  { opcode: '0x2619', name: 'TRACE_DUMP', surface: 'trace' },
 ] as const;
+
+export const TRACE_PD_NAME: Record<number, string> = {
+  0: 'controller',
+  12: 'vibe_engine',
+  20: 'fault_handler',
+  25: 'trace_recorder',
+  41: 'linux_vmm',
+  42: 'freebsd_vmm',
+  43: 'cc_pd',
+};
 
 export function rawTerminalKeycode(byte: number): number {
   return CC_INPUT_RAW_BYTE_BASE | (byte & 0xff);

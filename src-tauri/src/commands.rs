@@ -4,9 +4,9 @@ use tauri::State;
 
 use crate::cc_ipc::{
     CcClient, DeviceInfo, DeviceStatusInfo, FaultInjectResult, GuestCreateRequest,
-    GuestCreateResult, GuestInfo, GuestStatus, InputEvent, PoecatStatus, SessionInfo,
-    SessionRecvResult, SessionSendResult, SessionStatus, SnapResult, TrafficEvent,
-    CC_DEV_TYPE_COUNT,
+    GuestCreateResult, GuestInfo, GuestLifecycleResult, GuestStatus, InputEvent, PoecatStatus,
+    SessionInfo, SessionRecvResult, SessionSendResult, SessionStatus, SnapResult, TraceDumpResult,
+    TraceStatus, TrafficEvent, CC_DEV_TYPE_COUNT,
 };
 
 type ClientCell = Arc<Mutex<Option<CcClient>>>;
@@ -168,7 +168,8 @@ pub async fn cc_session_send(
     state: State<'_, AppState>,
 ) -> Result<SessionSendResult, String> {
     with_client(state.client.clone(), move |c: &mut CcClient| {
-        c.session_send(cmd_type, &command).map_err(|e| e.to_string())
+        c.session_send(cmd_type, &command)
+            .map_err(|e| e.to_string())
     })
     .await
 }
@@ -250,6 +251,40 @@ pub async fn cc_create_guest(
 ) -> Result<GuestCreateResult, String> {
     with_client(state.client.clone(), move |c: &mut CcClient| {
         c.create_guest(&request).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn cc_suspend_guest(
+    handle: u32,
+    state: State<'_, AppState>,
+) -> Result<GuestLifecycleResult, String> {
+    with_client(state.client.clone(), move |c: &mut CcClient| {
+        c.suspend_guest(handle).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn cc_resume_guest(
+    handle: u32,
+    state: State<'_, AppState>,
+) -> Result<GuestLifecycleResult, String> {
+    with_client(state.client.clone(), move |c: &mut CcClient| {
+        c.resume_guest(handle).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn cc_destroy_guest(
+    handle: u32,
+    reason: u32,
+    state: State<'_, AppState>,
+) -> Result<GuestLifecycleResult, String> {
+    with_client(state.client.clone(), move |c: &mut CcClient| {
+        c.destroy_guest(handle, reason).map_err(|e| e.to_string())
     })
     .await
 }
@@ -362,6 +397,43 @@ pub async fn cc_fault_inject(
     with_client(state.client.clone(), move |c: &mut CcClient| {
         c.fault_inject(slot_id, fault_kind, flags)
             .map_err(|e| e.to_string())
+    })
+    .await
+}
+
+// ── Trace relay ───────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn cc_trace_start(flags: u32, state: State<'_, AppState>) -> Result<TraceStatus, String> {
+    with_client(state.client.clone(), move |c: &mut CcClient| {
+        c.trace_start(flags).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn cc_trace_stop(state: State<'_, AppState>) -> Result<TraceStatus, String> {
+    with_client(state.client.clone(), move |c: &mut CcClient| {
+        c.trace_stop().map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn cc_trace_query(state: State<'_, AppState>) -> Result<TraceStatus, String> {
+    with_client(state.client.clone(), move |c: &mut CcClient| {
+        c.trace_query().map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn cc_trace_dump(
+    max_events: u32,
+    state: State<'_, AppState>,
+) -> Result<TraceDumpResult, String> {
+    with_client(state.client.clone(), move |c: &mut CcClient| {
+        c.trace_dump(max_events).map_err(|e| e.to_string())
     })
     .await
 }

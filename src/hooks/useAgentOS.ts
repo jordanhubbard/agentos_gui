@@ -4,6 +4,7 @@ import type {
   GuestInfo, GuestStatus, DeviceInfo, DeviceStatusInfo, PoecatStatus, SnapResult,
   InputEvent, GuestCreateRequest, GuestCreateResult, SessionInfo, SessionStatus,
   SessionSendResult, SessionRecvResult, FaultInjectResult, TrafficEvent,
+  GuestLifecycleResult, TraceDumpResult, TraceEntry, TraceStatus,
 } from '../types';
 
 export interface AgentOSState {
@@ -15,6 +16,8 @@ export interface AgentOSState {
   sessions:    SessionInfo[];
   sessionStatus: SessionStatus | null;
   traffic:     TrafficEvent[];
+  traceStatus: TraceStatus | null;
+  traceEvents: TraceEntry[];
   logLines:    string[];
   consoleChunks: string[];
   error:       string | null;
@@ -31,6 +34,8 @@ export function useAgentOS() {
     sessions:   [],
     sessionStatus: null,
     traffic:    [],
+    traceStatus: null,
+    traceEvents: [],
     logLines:   [],
     consoleChunks: [],
     error:      null,
@@ -100,6 +105,8 @@ export function useAgentOS() {
       sessions: [],
       sessionStatus: null,
       traffic: [],
+      traceStatus: null,
+      traceEvents: [],
       logLines: [],
       consoleChunks: [],
     }));
@@ -110,13 +117,24 @@ export function useAgentOS() {
     refreshRef.current = true;
     setState(s => ({ ...s, refreshing: true }));
     try {
-      const [rawGuests, devices, polecats, sessions, sessionStatus, traffic] = await Promise.all([
+      const [
+        rawGuests,
+        devices,
+        polecats,
+        sessions,
+        sessionStatus,
+        traffic,
+        traceStatus,
+        traceDump,
+      ] = await Promise.all([
         invoke<GuestInfo[]>('cc_list_guests'),
         invoke<DeviceInfo[]>('cc_list_devices', { devType: null }),
         invoke<PoecatStatus>('cc_list_polecats'),
         invoke<SessionInfo[]>('cc_list_sessions'),
         invoke<SessionStatus>('cc_session_status', { sessionId: null }),
         invoke<TrafficEvent[]>('cc_traffic_events', { limit: 192 }),
+        invoke<TraceStatus>('cc_trace_query'),
+        invoke<TraceDumpResult>('cc_trace_dump', { maxEvents: 128 }),
       ]);
       const guests = await Promise.all(rawGuests.map(async guest => {
         try {
@@ -139,6 +157,8 @@ export function useAgentOS() {
         sessions,
         sessionStatus,
         traffic,
+        traceStatus,
+        traceEvents: traceDump.events,
         error: null,
         refreshing: false,
       }));
@@ -184,6 +204,24 @@ export function useAgentOS() {
   const restore = useCallback(
     (handle: number, snapLo: number, snapHi: number) =>
       invoke<void>('cc_restore', { handle, snapLo, snapHi }),
+    [],
+  );
+
+  const suspendGuest = useCallback(
+    (handle: number) =>
+      invoke<GuestLifecycleResult>('cc_suspend_guest', { handle }),
+    [],
+  );
+
+  const resumeGuest = useCallback(
+    (handle: number) =>
+      invoke<GuestLifecycleResult>('cc_resume_guest', { handle }),
+    [],
+  );
+
+  const destroyGuest = useCallback(
+    (handle: number, reason = 0) =>
+      invoke<GuestLifecycleResult>('cc_destroy_guest', { handle, reason }),
     [],
   );
 
@@ -240,6 +278,28 @@ export function useAgentOS() {
     [],
   );
 
+  const traceStart = useCallback(
+    (flags = 1) =>
+      invoke<TraceStatus>('cc_trace_start', { flags }),
+    [],
+  );
+
+  const traceStop = useCallback(
+    () => invoke<TraceStatus>('cc_trace_stop'),
+    [],
+  );
+
+  const traceQuery = useCallback(
+    () => invoke<TraceStatus>('cc_trace_query'),
+    [],
+  );
+
+  const traceDump = useCallback(
+    (maxEvents = 128) =>
+      invoke<TraceDumpResult>('cc_trace_dump', { maxEvents }),
+    [],
+  );
+
   const clearLogs = useCallback(() =>
     setState(s => ({ ...s, logLines: [], consoleChunks: [] })), []);
 
@@ -268,6 +328,9 @@ export function useAgentOS() {
     guestStatus,
     snapshot,
     restore,
+    suspendGuest,
+    resumeGuest,
+    destroyGuest,
     sendInput,
     deviceStatus,
     createGuest,
@@ -277,6 +340,10 @@ export function useAgentOS() {
     sessionRecv,
     attachFramebuffer,
     faultInject,
+    traceStart,
+    traceStop,
+    traceQuery,
+    traceDump,
     clearLogs,
     setError,
   };

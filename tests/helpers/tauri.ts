@@ -56,10 +56,26 @@ export const DEFAULT_MOCKS: Record<string, unknown> = {
   cc_snapshot:           { snap_lo: 1, snap_hi: 2 },
   cc_restore:            null,
   cc_create_guest:       { handle: 3 },
+  cc_suspend_guest:      { ok: 0, state: 5 },
+  cc_resume_guest:       { ok: 0, state: 4 },
+  cc_destroy_guest:      { ok: 0, state: 6 },
   cc_send_input:         null,
   cc_device_status:      { dev_type: 0, dev_handle: 1, state: 1 },
   cc_attach_framebuffer: 1,
   cc_fault_inject:       { result: 0, ticks_to_recovery: 0, trace_event_id: 0 },
+  cc_trace_start:        { ok: 0, event_count: 0, bytes_used: 0, overflow_count: 0 },
+  cc_trace_stop:         { ok: 0, event_count: 3, bytes_used: 0, overflow_count: 0 },
+  cc_trace_query:        { ok: 0, event_count: 2, bytes_used: 32, overflow_count: 0 },
+  cc_trace_dump: {
+    ok: 0,
+    events_written: 2,
+    bytes_written: 32,
+    overflow_count: 0,
+    events: [
+      { timestamp_ns: 1000, from_pd: 43, to_pd: 12, channel: 40, opcode: 0x2607, seq_lo: 0 },
+      { timestamp_ns: 2000, from_pd: 43, to_pd: 41, channel: 75, opcode: 0x260d, seq_lo: 1 },
+    ],
+  },
 };
 
 export type MockOverrides = Partial<Record<string, unknown>>;

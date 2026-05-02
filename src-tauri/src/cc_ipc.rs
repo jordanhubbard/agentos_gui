@@ -32,6 +32,13 @@ pub const MSG_CC_RESTORE: u32 = 0x260F;
 pub const MSG_CC_LOG_STREAM: u32 = 0x2610;
 pub const MSG_CC_CREATE_GUEST: u32 = 0x2611;
 pub const MSG_CC_FAULT_INJECT: u32 = 0x2612;
+pub const MSG_CC_SUSPEND_GUEST: u32 = 0x2613;
+pub const MSG_CC_RESUME_GUEST: u32 = 0x2614;
+pub const MSG_CC_DESTROY_GUEST: u32 = 0x2615;
+pub const MSG_CC_TRACE_START: u32 = 0x2616;
+pub const MSG_CC_TRACE_STOP: u32 = 0x2617;
+pub const MSG_CC_TRACE_QUERY: u32 = 0x2618;
+pub const MSG_CC_TRACE_DUMP: u32 = 0x2619;
 
 // ── Device type constants (CC_DEV_TYPE_*) ────────────────────────────────────
 pub const CC_DEV_TYPE_SERIAL: u32 = 0;
@@ -57,6 +64,7 @@ const CC_REQ_SIZE: usize = 4 + 12 + CC_SHMEM_SIZE; // 4112
 const CC_REPLY_SIZE: usize = 16 + CC_SHMEM_SIZE; // 4112
 const CC_IO_TIMEOUT: Duration = Duration::from_secs(5);
 const CC_TRAFFIC_MAX: usize = 512;
+const CC_TRACE_ENTRY_SIZE: usize = 16;
 
 // ── Serde types for Tauri ─────────────────────────────────────────────────────
 
@@ -161,6 +169,39 @@ pub struct FaultInjectResult {
     pub result: u32,
     pub ticks_to_recovery: u32,
     pub trace_event_id: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GuestLifecycleResult {
+    pub ok: u32,
+    pub state: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TraceStatus {
+    pub ok: u32,
+    pub event_count: u32,
+    pub bytes_used: u32,
+    pub overflow_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TraceEntry {
+    pub timestamp_ns: u64,
+    pub from_pd: u8,
+    pub to_pd: u8,
+    pub channel: u8,
+    pub opcode: u16,
+    pub seq_lo: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TraceDumpResult {
+    pub ok: u32,
+    pub events_written: u32,
+    pub bytes_written: u32,
+    pub overflow_count: u32,
+    pub events: Vec<TraceEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -425,6 +466,40 @@ impl CcClient {
         Ok(())
     }
 
+    pub fn suspend_guest(&mut self, handle: u32) -> io::Result<GuestLifecycleResult> {
+        self.guest_lifecycle(MSG_CC_SUSPEND_GUEST, handle, 0)
+    }
+
+    pub fn resume_guest(&mut self, handle: u32) -> io::Result<GuestLifecycleResult> {
+        self.guest_lifecycle(MSG_CC_RESUME_GUEST, handle, 0)
+    }
+
+    pub fn destroy_guest(&mut self, handle: u32, reason: u32) -> io::Result<GuestLifecycleResult> {
+        self.guest_lifecycle(MSG_CC_DESTROY_GUEST, handle, reason)
+    }
+
+    fn guest_lifecycle(
+        &mut self,
+        opcode: u32,
+        handle: u32,
+        reason: u32,
+    ) -> io::Result<GuestLifecycleResult> {
+        let reply = self.send_recv(opcode, handle, reason, 0, &[])?;
+        let ok = u32::from_le_bytes(reply[0..4].try_into().unwrap());
+        if ok != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("{} err {ok}", opcode_name(opcode).to_ascii_lowercase()),
+            ));
+        }
+        let state = if opcode == MSG_CC_DESTROY_GUEST {
+            6
+        } else {
+            u32::from_le_bytes(reply[4..8].try_into().unwrap())
+        };
+        Ok(GuestLifecycleResult { ok, state })
+    }
+
     pub fn log_stream(&mut self, slot: u32, pd_id: u32) -> io::Result<String> {
         let reply = self.send_recv(MSG_CC_LOG_STREAM, slot, pd_id, 0, &[])?;
         let ok = u32::from_le_bytes(reply[0..4].try_into().unwrap());
@@ -533,6 +608,92 @@ impl CcClient {
             result: u32::from_le_bytes(reply[4..8].try_into().unwrap()),
             ticks_to_recovery: u32::from_le_bytes(reply[8..12].try_into().unwrap()),
             trace_event_id: u32::from_le_bytes(reply[12..16].try_into().unwrap()),
+        })
+    }
+
+    pub fn trace_start(&mut self, flags: u32) -> io::Result<TraceStatus> {
+        let reply = self.send_recv(MSG_CC_TRACE_START, flags, 0, 0, &[])?;
+        let ok = u32::from_le_bytes(reply[0..4].try_into().unwrap());
+        if ok != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("trace_start err {ok}"),
+            ));
+        }
+        Ok(TraceStatus {
+            ok,
+            event_count: 0,
+            bytes_used: 0,
+            overflow_count: 0,
+        })
+    }
+
+    pub fn trace_stop(&mut self) -> io::Result<TraceStatus> {
+        let reply = self.send_recv(MSG_CC_TRACE_STOP, 0, 0, 0, &[])?;
+        let ok = u32::from_le_bytes(reply[0..4].try_into().unwrap());
+        if ok != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("trace_stop err {ok}"),
+            ));
+        }
+        Ok(TraceStatus {
+            ok,
+            event_count: u32::from_le_bytes(reply[4..8].try_into().unwrap()),
+            bytes_used: 0,
+            overflow_count: 0,
+        })
+    }
+
+    pub fn trace_query(&mut self) -> io::Result<TraceStatus> {
+        let reply = self.send_recv(MSG_CC_TRACE_QUERY, 0, 0, 0, &[])?;
+        let ok = u32::from_le_bytes(reply[0..4].try_into().unwrap());
+        if ok != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("trace_query err {ok}"),
+            ));
+        }
+        Ok(TraceStatus {
+            ok,
+            event_count: u32::from_le_bytes(reply[4..8].try_into().unwrap()),
+            bytes_used: u32::from_le_bytes(reply[8..12].try_into().unwrap()),
+            overflow_count: u32::from_le_bytes(reply[12..16].try_into().unwrap()),
+        })
+    }
+
+    pub fn trace_dump(&mut self, max_events: u32) -> io::Result<TraceDumpResult> {
+        let reply = self.send_recv(MSG_CC_TRACE_DUMP, max_events, 0, 0, &[])?;
+        let ok = u32::from_le_bytes(reply[0..4].try_into().unwrap());
+        if ok != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("trace_dump err {ok}"),
+            ));
+        }
+        let events_written = u32::from_le_bytes(reply[4..8].try_into().unwrap());
+        let bytes_written = u32::from_le_bytes(reply[8..12].try_into().unwrap());
+        let overflow_count = u32::from_le_bytes(reply[12..16].try_into().unwrap());
+        let shmem = &reply[16..];
+        let count = (events_written as usize).min(shmem.len() / CC_TRACE_ENTRY_SIZE);
+        let mut events = Vec::with_capacity(count);
+        for i in 0..count {
+            let b = &shmem[i * CC_TRACE_ENTRY_SIZE..(i + 1) * CC_TRACE_ENTRY_SIZE];
+            events.push(TraceEntry {
+                timestamp_ns: u64::from_le_bytes(b[0..8].try_into().unwrap()),
+                from_pd: b[8],
+                to_pd: b[9],
+                channel: b[10],
+                opcode: u16::from_le_bytes(b[12..14].try_into().unwrap()),
+                seq_lo: u16::from_le_bytes(b[14..16].try_into().unwrap()),
+            });
+        }
+        Ok(TraceDumpResult {
+            ok,
+            events_written,
+            bytes_written,
+            overflow_count,
+            events,
         })
     }
 
@@ -680,6 +841,13 @@ fn opcode_name(opcode: u32) -> &'static str {
         MSG_CC_LOG_STREAM => "LOG_STREAM",
         MSG_CC_CREATE_GUEST => "CREATE_GUEST",
         MSG_CC_FAULT_INJECT => "FAULT_INJECT",
+        MSG_CC_SUSPEND_GUEST => "SUSPEND_GUEST",
+        MSG_CC_RESUME_GUEST => "RESUME_GUEST",
+        MSG_CC_DESTROY_GUEST => "DESTROY_GUEST",
+        MSG_CC_TRACE_START => "TRACE_START",
+        MSG_CC_TRACE_STOP => "TRACE_STOP",
+        MSG_CC_TRACE_QUERY => "TRACE_QUERY",
+        MSG_CC_TRACE_DUMP => "TRACE_DUMP",
         _ => "UNKNOWN",
     }
 }
@@ -702,6 +870,13 @@ fn opcode_has_ok_mr(opcode: u32) -> bool {
             | MSG_CC_LOG_STREAM
             | MSG_CC_CREATE_GUEST
             | MSG_CC_FAULT_INJECT
+            | MSG_CC_SUSPEND_GUEST
+            | MSG_CC_RESUME_GUEST
+            | MSG_CC_DESTROY_GUEST
+            | MSG_CC_TRACE_START
+            | MSG_CC_TRACE_STOP
+            | MSG_CC_TRACE_QUERY
+            | MSG_CC_TRACE_DUMP
     )
 }
 
@@ -713,6 +888,7 @@ fn reply_shmem_len(opcode: u32, mr: [u32; 4]) -> u32 {
         MSG_CC_LIST_DEVICES => mr[0].saturating_mul(16).min(CC_SHMEM_SIZE as u32),
         MSG_CC_GUEST_STATUS if mr[0] == 0 => 32,
         MSG_CC_DEVICE_STATUS if mr[0] == 0 => 16,
+        MSG_CC_TRACE_DUMP if mr[0] == 0 => mr[2].min(CC_SHMEM_SIZE as u32),
         _ => 0,
     }
 }
