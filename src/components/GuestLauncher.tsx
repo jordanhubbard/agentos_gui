@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Play } from 'lucide-react';
-import type { GuestCreateRequest, GuestCreateResult } from '../types';
+import type { GuestCreateRequest, GuestCreateResult, GuestInfo } from '../types';
 import {
   CC_DEV_TYPE_BLOCK, CC_DEV_TYPE_NET, CC_DEV_TYPE_SERIAL,
   DEV_TYPE_NAME,
@@ -8,6 +8,9 @@ import {
 import { DeviceIcon } from './DeviceIcon';
 
 interface Props {
+  guests: GuestInfo[];
+  selectedGuestHandle: number | null;
+  onSelectGuest: (handle: number) => void;
   onCreate: (request: GuestCreateRequest) => Promise<GuestCreateResult>;
   onCreated: () => void;
 }
@@ -17,13 +20,44 @@ const DEFAULT_FLAGS =
   (1 << CC_DEV_TYPE_NET) |
   (1 << CC_DEV_TYPE_BLOCK);
 
-export function GuestLauncher({ onCreate, onCreated }: Props) {
-  const [osType, setOsType] = useState(1);
-  const [arch, setArch] = useState(1);
+export function GuestLauncher({
+  guests,
+  selectedGuestHandle,
+  onSelectGuest,
+  onCreate,
+  onCreated,
+}: Props) {
+  const selected = guests.find(g => g.guest_handle === selectedGuestHandle) ?? null;
+  const [osType, setOsType] = useState(selected?.os_type ?? 1);
+  const [arch, setArch] = useState(selected?.arch ?? 1);
   const [ramMb, setRamMb] = useState(512);
   const [deviceFlags, setDeviceFlags] = useState(DEFAULT_FLAGS);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (selected) {
+      setOsType(selected.os_type);
+      setArch(selected.arch);
+    }
+  }, [selected?.os_type, selected?.arch]);
+
+  function pickOs(value: number) {
+    setOsType(value);
+    const match = guests.find(g => g.os_type === value && g.arch === arch)
+      ?? guests.find(g => g.os_type === value);
+    if (match) onSelectGuest(match.guest_handle);
+  }
+
+  function pickArch(value: number) {
+    setArch(value);
+    const match = guests.find(g => g.arch === value && g.os_type === osType)
+      ?? guests.find(g => g.arch === value);
+    if (match) onSelectGuest(match.guest_handle);
+  }
+
+  const hasGuestForOs = (value: number) => guests.some(g => g.os_type === value);
+  const hasGuestForArch = (value: number) => guests.some(g => g.arch === value);
 
   function toggleDevice(devType: number) {
     setDeviceFlags(flags => flags ^ (1 << devType));
@@ -71,38 +105,56 @@ export function GuestLauncher({ onCreate, onCreated }: Props) {
           {[
             { label: 'LNX', value: 1 },
             { label: 'BSD', value: 2 },
-          ].map(option => (
-            <button
-              key={option.value}
-              onClick={() => setOsType(option.value)}
-              className={`flex-1 rounded px-2 py-1.5 font-mono text-xs transition ${
-                osType === option.value
-                  ? 'bg-os-accent text-white'
-                  : 'text-os-muted hover:text-os-text'
-              }`}
-            >
-              {option.label}
-            </button>
-          ))}
+          ].map(option => {
+            const running = hasGuestForOs(option.value);
+            return (
+              <button
+                key={option.value}
+                onClick={() => pickOs(option.value)}
+                title={running ? 'Select running guest' : 'Set launch type'}
+                className={`flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 font-mono text-xs transition ${
+                  osType === option.value
+                    ? 'bg-os-accent text-white'
+                    : 'text-os-muted hover:text-os-text'
+                }`}
+              >
+                {running && (
+                  <span className={`h-1.5 w-1.5 rounded-full ${
+                    osType === option.value ? 'bg-white' : 'bg-emerald-400'
+                  }`} />
+                )}
+                {option.label}
+              </button>
+            );
+          })}
         </div>
 
         <div className="flex rounded-lg border border-os-border p-1">
           {[
             { label: 'A64', value: 1 },
             { label: 'X64', value: 2 },
-          ].map(option => (
-            <button
-              key={option.value}
-              onClick={() => setArch(option.value)}
-              className={`flex-1 rounded px-2 py-1.5 font-mono text-xs transition ${
-                arch === option.value
-                  ? 'bg-os-accent text-white'
-                  : 'text-os-muted hover:text-os-text'
-              }`}
-            >
-              {option.label}
-            </button>
-          ))}
+          ].map(option => {
+            const running = hasGuestForArch(option.value);
+            return (
+              <button
+                key={option.value}
+                onClick={() => pickArch(option.value)}
+                title={running ? 'Select running guest' : 'Set launch arch'}
+                className={`flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 font-mono text-xs transition ${
+                  arch === option.value
+                    ? 'bg-os-accent text-white'
+                    : 'text-os-muted hover:text-os-text'
+                }`}
+              >
+                {running && (
+                  <span className={`h-1.5 w-1.5 rounded-full ${
+                    arch === option.value ? 'bg-white' : 'bg-emerald-400'
+                  }`} />
+                )}
+                {option.label}
+              </button>
+            );
+          })}
         </div>
 
         <label className="flex items-center gap-2 rounded-lg border border-os-border px-3 py-2">

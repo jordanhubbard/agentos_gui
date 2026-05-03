@@ -106,7 +106,13 @@ export default function App() {
         <div className="flex-1 overflow-y-auto px-4 py-5 sm:px-6">
           {tab === 'guests' && (
             <div className="space-y-5">
-              <GuestLauncher onCreate={createGuest} onCreated={refresh} />
+              <GuestLauncher
+                guests={state.guests}
+                selectedGuestHandle={selectedGuest?.guest_handle ?? null}
+                onSelectGuest={setSelectedGuestHandle}
+                onCreate={createGuest}
+                onCreated={refresh}
+              />
 
               {state.guests.length === 0 ? (
                 <div className="flex min-h-[20rem] flex-col items-center justify-center gap-3 text-os-muted">
@@ -121,8 +127,8 @@ export default function App() {
                   </button>
                 </div>
               ) : (
-                <div className="grid gap-5 xl:grid-cols-[minmax(22rem,32rem)_1fr]">
-                  <div className="grid content-start gap-4">
+                <div className="grid gap-5 xl:grid-cols-[minmax(20rem,26rem)_minmax(0,1fr)]">
+                  <div className="grid min-w-0 content-start gap-4">
                     {state.guests.map(g => (
                       <GuestCard
                         key={g.guest_handle}
@@ -149,19 +155,19 @@ export default function App() {
                       />
                     ))}
                   </div>
-                  <div className="space-y-5">
+                  <div className="min-w-0 space-y-5">
+                    <GuestConsole
+                      guest={selectedGuest}
+                      chunks={state.consoleChunks}
+                      onFetch={fetchLogs}
+                      onSendInput={sendInput}
+                    />
                     <TopologyGraph
                       guest={selectedGuest}
                       devices={state.devices}
                       sessions={state.sessions}
                       traffic={state.traffic}
                       traceEvents={state.traceEvents}
-                    />
-                    <GuestConsole
-                      guest={selectedGuest}
-                      chunks={state.consoleChunks}
-                      onFetch={fetchLogs}
-                      onSendInput={sendInput}
                     />
                   </div>
                 </div>
