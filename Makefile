@@ -4,16 +4,23 @@
 #   make build        build the native desktop app
 #   make run          run the app against a local agentOS CC-PD socket
 
-.PHONY: all build run dev check test clean help
+.PHONY: all build run dev check test deps clean help
 
 APP_BIN       := src-tauri/target/release/agentos-gui
 AGENTOS_DIR   ?= $(abspath ../agentos)
 CC_PD_SOCK    ?= $(AGENTOS_DIR)/build/cc_pd.sock
 CC_PD_SOCK_ABS := $(abspath $(CC_PD_SOCK))
+DEPS_STAMP    := node_modules/.deps-stamp
 
 all: run
 
-build:
+deps: $(DEPS_STAMP)
+
+$(DEPS_STAMP): package.json package-lock.json
+	@npm install
+	@touch $@
+
+build: deps
 	@npm run build -- --bundles app
 
 run:
@@ -35,14 +42,14 @@ run:
 	@echo ""
 	@AGENTOS_GUI_AUTOCONNECT=1 CC_PD_SOCK="$(CC_PD_SOCK_ABS)" "$(APP_BIN)"
 
-dev:
+dev: deps
 	@echo "CC-PD socket: $(CC_PD_SOCK_ABS)"
 	@AGENTOS_GUI_AUTOCONNECT=1 CC_PD_SOCK="$(CC_PD_SOCK_ABS)" npm run dev
 
-check:
+check: deps
 	@npm run check
 
-test:
+test: deps
 	@npm test
 
 clean:
@@ -54,6 +61,7 @@ help:
 	@echo "agentOS GUI"
 	@echo ""
 	@echo "Targets:"
+	@echo "  make deps             Install npm dependencies (idempotent)"
 	@echo "  make build            Build the native desktop app"
 	@echo "  make run              Run the app against ../agentos/build/cc_pd.sock"
 	@echo "  make dev              Run Tauri dev mode against the same socket"
