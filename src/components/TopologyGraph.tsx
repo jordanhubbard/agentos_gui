@@ -179,36 +179,48 @@ export function TopologyGraph({ guest, devices, sessions, traffic, traceEvents }
 
       <div className="overflow-x-auto">
         <div className="relative h-[24rem] min-w-[760px]">
+          {/* SVG holds only the lines; preserveAspectRatio="none" so they
+              stretch to match the percentage-positioned nodes.  Labels are
+              rendered as HTML below to keep glyph aspect ratio natural. */}
           <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
             {edges.map(edge => {
               const from = nodes.find(n => n.id === edge.from);
               const to = nodes.find(n => n.id === edge.to);
               if (!from || !to) return null;
               return (
-                <g key={`${edge.from}-${edge.to}`}>
-                  <line
-                    x1={from.x}
-                    y1={from.y}
-                    x2={to.x}
-                    y2={to.y}
-                    stroke={edge.active ? 'rgba(45,212,191,.8)' : 'rgba(123,132,145,.32)'}
-                    strokeWidth={edge.active ? 0.5 : 0.3}
-                    vectorEffect="non-scaling-stroke"
-                  />
-                  <text
-                    x={(from.x + to.x) / 2}
-                    y={(from.y + to.y) / 2 - 1}
-                    textAnchor="middle"
-                    className={edge.active ? 'fill-os-accent' : 'fill-os-muted'}
-                    fontSize="2.4"
-                    fontFamily="JetBrains Mono, monospace"
-                  >
-                    {edge.label}
-                  </text>
-                </g>
+                <line
+                  key={`${edge.from}-${edge.to}`}
+                  x1={from.x}
+                  y1={from.y}
+                  x2={to.x}
+                  y2={to.y}
+                  stroke={edge.active ? 'rgba(45,212,191,.8)' : 'rgba(123,132,145,.32)'}
+                  strokeWidth={edge.active ? 0.5 : 0.3}
+                  vectorEffect="non-scaling-stroke"
+                />
               );
             })}
           </svg>
+
+          {edges.map(edge => {
+            const from = nodes.find(n => n.id === edge.from);
+            const to = nodes.find(n => n.id === edge.to);
+            if (!from || !to) return null;
+            const midX = (from.x + to.x) / 2;
+            const midY = (from.y + to.y) / 2;
+            return (
+              <span
+                key={`label-${edge.from}-${edge.to}`}
+                className={`pointer-events-none absolute -translate-x-1/2 -translate-y-1/2
+                            rounded bg-os-surface/80 px-1 font-mono text-[10px] leading-none ${
+                              edge.active ? 'text-os-accent' : 'text-os-muted'
+                            }`}
+                style={{ left: `${midX}%`, top: `${midY}%` }}
+              >
+                {edge.label}
+              </span>
+            );
+          })}
 
           {nodes.map(node => (
             <GraphNodeView key={node.id} node={node} />
