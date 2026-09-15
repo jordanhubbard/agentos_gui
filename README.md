@@ -90,3 +90,33 @@ message traffic inspector so protocol failures are visible during OS bring-up.
 
 Connection flow uses `MSG_CC_CONNECT` and `MSG_CC_DISCONNECT`. Guest launch and
 console input use `MSG_CC_CREATE_GUEST` and `MSG_CC_SEND_INPUT`.
+
+<!-- ai-template:narrative:start -->
+## The Totally True and Not At All Embellished History of agentos_gui
+
+### The continuing adventures of Jordan Hubbard and Sir Reginald von Fluffington III
+
+> *Part 16 of an ongoing chronicle. [← Part 15: Crust](https://github.com/jordanhubbard/crust#the-totally-true-and-not-at-all-embellished-history-of-crust) | [Part 17: PythonOS →](https://github.com/jordanhubbard/pythonos#the-totally-true-and-not-at-all-embellished-history-of-pythonos)*
+> *[Chronicle index](https://github.com/jordanhubbard/ai-template/blob/main/CHRONICLE.md) · Ordered by first recorded AI-assisted commit.*
+
+The programmer had built an operating-system platform for agents and had been quite firm that human user interfaces did not belong inside it.
+
+Then he wanted to see what it was doing.
+
+Sir Reginald von Fluffington III watched this development from outside the keyboard, a temporary separation of concerns caused by the keyboard being unavailable beneath several pages of protocol notes.
+
+“A separate application,” the programmer explained. “It will speak the public contract.”
+
+This was agentos_gui: a Tauri desktop application with a Rust bridge and a React interface. It would connect to the CC-PD Unix socket of a running agentOS instance and turn requests and replies into views a human could inspect. The kernel would not acquire a dependency on a button merely because the programmer wanted one.
+
+The interface exposed guests, devices, logs, agents, and the API. Protocol constants were declared from the published contract rather than imported through kernel headers. This preserved the boundary and created the entirely reasonable obligation to keep the opcode values synchronized. Sir Reginald considered all numeric protocols inferior to his own, in which one fixed stare meant several dozen things depending on context.
+
+Requests and replies were each 4,112 bytes. The programmer appreciated the symmetry. The cat appreciated the piece of paper on which it had been calculated and sat down on it.
+
+A bounded traffic ring made exchanges visible in a live inspector. When a guest did not do what was expected, the programmer could look at the messages rather than debate a diagram. The application also needed something to connect to: agentOS first, GUI second. A desktop window was not evidence that an operating system had booted.
+
+“Now I can see the boundary,” the programmer said.
+
+Sir Reginald stepped across it and occupied the keyboard. The demonstration was clear, the ownership model was disputed, and endorsement remained pending a Guests tab capable of listing the bird outside the window.
+
+<!-- ai-template:narrative:end -->
