@@ -1,0 +1,37 @@
+{
+  "schema": "agentos_gui.guest_keyboard.v1",
+  "host": "sparky Linux aarch64",
+  "gui_runtime_revision": "b80ef792174432ed22f84a958715e6885fe537d4",
+  "gui_binary_sha256": "fc86e38e86c90016660715e5635e616e9830569d1bb8603c2bd7b656834b24d3",
+  "os_checkout_revision": "8ce7d3df7d991bb99cb9268d329ea250a7f61131",
+  "os_image_sha256": "1c7223c78837f8a04c13cc17b09271fab836c96f0e69183a58d1ae769aeae987",
+  "os_command": "make run GUEST_OS=debian-graphics-input",
+  "gui_command": "make run CC_PD_SOCK=/tmp/agentos-v04-debian-network/build/cc_pd.sock",
+  "device": "/dev/input/event0, name agentOS keyboard",
+  "method": "Native Tauri display focused after a completed framebuffer capture. Guest dd reads four 24-byte Linux input_event records; od reads the 8-byte payload at offsets 16,40,64,88. The GUI console is used only to prepare/read the probe; tested keys are sent through the focused graphical canvas.",
+  "key_a": {
+    "result": "PASS",
+    "bytes": 96,
+    "events_type_code_value": [[1,30,1],[0,0,0],[1,30,0],[0,0,0]],
+    "screenshot_sha256": "70e4cc9a87df3c0ce9c03e14d656e6d3aac7c757c3abda7074b976928ca13579"
+  },
+  "focus_release": {
+    "result": "PASS",
+    "method": "Press Shift while canvas focused, click GUI Refresh before host Shift keyup, then read guest events",
+    "bytes": 96,
+    "events_type_code_value": [[1,42,1],[0,0,0],[1,42,0],[0,0,0]],
+    "screenshot_sha256": "063065f895b2bed1762a1da52c3abf1ef07631681eb7be0d1437de7596cc06db"
+  },
+  "gui_acknowledged_batches": 4,
+  "host_validation": {"make_check": "PASS", "make_test": "109 passed", "make_build": "PASS"},
+  "shutdown": {"qemu_exit": 0, "gui_exec_exit": 143, "note": "GUI handle returned143 after Alt-F4; not claimed as clean exit. No diagnostic in captured native log."},
+  "guest_log_sha256": "b4926ff5a92d3e5bbcdb6d6cacd5c42d1cf2389d85066662edfce09c749881e6",
+  "limitations": [
+    "Native check covers A and focus-loss Shift release, not every key mapping",
+    "Fault, overflow, retry and recovery behavior tested with mocked IPC",
+    "Disconnect or abrupt GUI termination cannot guarantee held-key releases",
+    "No graphical pointer or IME integration",
+    "Full-frame latency remains unsuitable for responsive desktop use",
+    "No release or complete milestone qualification"
+  ]
+}
