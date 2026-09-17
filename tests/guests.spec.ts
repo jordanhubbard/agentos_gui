@@ -134,7 +134,7 @@ test.describe('Guest list', () => {
     });
 
     test('Start calls cc_create_guest with launch settings', async ({ page }) => {
-      await page.getByRole('button', { name: 'Start' }).click();
+      await page.getByRole('button', { name: 'Start', exact: true }).click();
       const calls = await getCallsFor(page, 'cc_create_guest');
       expect(calls.length).toBeGreaterThan(0);
       expect((calls[0].args as any).request).toMatchObject({

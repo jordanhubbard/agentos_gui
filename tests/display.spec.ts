@@ -85,3 +85,75 @@ test('switching guests discards an in-flight frame and releases its token', asyn
   await expect(page.getByRole('button', { name: 'Capture display' })).toBeDisabled();
   expect(await page.getByLabel('Captured guest framebuffer').evaluate(el => (el as HTMLCanvasElement).width)).toBe(1);
 });
+
+test('live display waits for release and stops without another capture', async ({ page }) => {
+  await setupTauriMock(page, {
+    cc_frame_capture: { token: '10', sequence: '5', width: 2, height: 1, bytes: 8 },
+    cc_frame_read: [3, 2, 1, 0, 30, 20, 10, 0], cc_frame_release: null,
+  });
+  await page.addInitScript(() => {
+    const original = (window as any).__TAURI_INTERNALS__.invoke;
+    (window as any).__TAURI_INTERNALS__.invoke = async (cmd: string, args: unknown) => {
+      const result = await original(cmd, args);
+      if (cmd === 'cc_frame_read') return new Uint8Array(result).buffer;
+      if (cmd === 'cc_frame_release') return new Promise(resolve => {
+        (window as any).finishRelease = () => resolve(null);
+      });
+      return result;
+    };
+  });
+  await page.goto('/'); await connectApp(page);
+  await page.getByRole('button', { name: 'Start live display' }).click();
+  await expect.poll(async () => (await getCallsFor(page, 'cc_frame_release')).length).toBe(1);
+  await page.waitForTimeout(600);
+  expect(await getCallsFor(page, 'cc_frame_capture')).toHaveLength(1);
+  await page.evaluate(() => (window as any).finishRelease());
+  await expect.poll(async () => (await getCallsFor(page, 'cc_frame_release')).length).toBe(2);
+  await page.getByRole('button', { name: 'Stop live display' }).click();
+  await page.evaluate(() => (window as any).finishRelease());
+  await expect(page.getByRole('button', { name: 'Capture display' })).toBeEnabled();
+  await page.waitForTimeout(600);
+  expect(await getCallsFor(page, 'cc_frame_capture')).toHaveLength(2);
+});
+
+test('live display stops on release failure without retrying', async ({ page }) => {
+  await setupTauriMock(page, {
+    cc_frame_capture: { token: '11', sequence: '6', width: 2, height: 1, bytes: 8 },
+    cc_frame_read: mockError('read failed'), cc_frame_release: mockError('release failed'),
+  });
+  await page.goto('/'); await connectApp(page);
+  await page.getByRole('button', { name: 'Start live display' }).click();
+  await expect(page.getByRole('alert')).toContainText('release failed');
+  await expect(page.getByRole('button', { name: 'Start live display' })).toBeVisible();
+  await page.waitForTimeout(600);
+  expect(await getCallsFor(page, 'cc_frame_capture')).toHaveLength(1);
+  expect(await getCallsFor(page, 'cc_frame_release')).toHaveLength(1);
+});
+
+test('hiding the window cancels live capture and releases without presenting', async ({ page }) => {
+  await setupTauriMock(page, {
+    cc_frame_capture: { token: '12', sequence: '7', width: 2, height: 1, bytes: 8 },
+    cc_frame_read: null, cc_frame_release: null,
+  });
+  await page.addInitScript(() => {
+    const original = (window as any).__TAURI_INTERNALS__.invoke;
+    (window as any).__TAURI_INTERNALS__.invoke = async (cmd: string, args: any) => {
+      const result = await original(cmd, args);
+      if (cmd !== 'cc_frame_read') return result;
+      return new Promise(resolve => { (window as any).finishFrameRead = () => resolve(new ArrayBuffer(args.length)); });
+    };
+  });
+  await page.goto('/'); await connectApp(page);
+  await page.getByRole('button', { name: 'Start live display' }).click();
+  await expect.poll(async () => (await getCallsFor(page, 'cc_frame_read')).length).toBe(1);
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+    (window as any).finishFrameRead();
+  });
+  await expect.poll(async () => (await getCallsFor(page, 'cc_frame_release')).length).toBe(1);
+  await expect(page.getByText('No frame captured')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Start live display' })).toBeVisible();
+  await page.waitForTimeout(600);
+  expect(await getCallsFor(page, 'cc_frame_capture')).toHaveLength(1);
+});
