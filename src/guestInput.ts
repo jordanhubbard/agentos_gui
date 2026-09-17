@@ -24,13 +24,14 @@ export const evdevKeys: Readonly<Record<string, number>> = {
   Delete: 111, Pause: 119, MetaLeft: 125, MetaRight: 126, ContextMenu: 127,
 };
 
-export interface KeyboardStatus { error: string | null; busy: boolean; batches: number }
-type Submit = (events: DesktopInputEvent[]) => Promise<InputBatchAck>;
+export interface InputStatus { error: string | null; busy: boolean; batches: number }
+type Submit = (events: DesktopInputEvent[], device: number) => Promise<InputBatchAck>;
+type QueuedEvent = DesktopInputEvent & { device: number };
 const key = (code: number, value: number): DesktopInputEvent => ({ event_type: 1, code, value });
 const sync = (): DesktopInputEvent => ({ event_type: 0, code: 0, value: 0 });
 
-export class GuestKeyboard {
-  private pending: DesktopInputEvent[] = [];
+export class GuestInput {
+  private pending: QueuedEvent[] = [];
   private physical = new Set<number>();
   private possible = new Set<number>();
   private running = false;
@@ -38,43 +39,66 @@ export class GuestKeyboard {
   private error: string | null = null;
   private batches = 0;
 
-  constructor(private submit: Submit, private report: (status: KeyboardStatus) => void) {}
+  constructor(private submit: Submit, private report: (status: InputStatus) => void,
+    private label = 'Input') {}
 
   private publish() { this.report({ error: this.error, busy: this.running, batches: this.batches }); }
   private fail(reason: unknown) {
-    this.error = `Keyboard stopped: ${String(reason)}. Guest keys may remain pressed; release them before continuing.`;
+    this.error = `${this.label} stopped: ${String(reason)}. Guest keys or buttons may remain pressed; release them before continuing.`;
     this.pending = []; this.physical.clear(); this.publish();
   }
 
-  transition(code: number, down: boolean, repeat: boolean) {
+  transition(code: number, down: boolean, repeat: boolean, device = 0) {
     if (this.closed || this.error) return;
+    const id = device * 65536 + code;
     if (down) {
-      if (repeat && !this.physical.has(code)) return;
-      if (!repeat && this.physical.has(code)) return;
-      this.physical.add(code);
-    } else if (!this.physical.delete(code)) return;
-    this.enqueue(key(code, down ? (repeat ? 2 : 1) : 0));
+      if (repeat && !this.physical.has(id)) return;
+      if (!repeat && this.physical.has(id)) return;
+      this.physical.add(id);
+    } else if (!this.physical.delete(id)) return;
+    this.enqueue({ ...key(code, down ? (repeat ? 2 : 1) : 0), device });
   }
 
-  private enqueue(event: DesktopInputEvent) {
+  private enqueue(event: QueuedEvent) {
     if (this.pending.length >= 128) { this.fail('input queue full'); return; }
     this.pending.push(event);
     void this.pump();
   }
 
-  release() {
-    const keys = [...this.physical]; this.physical.clear();
-    for (const code of keys) {
+  relative(code: number, value: number) {
+    if (this.closed || this.error || value === 0) return;
+    if (![0, 1, 6, 8].includes(code) || !Number.isInteger(value) || value < -2147483648 || value > 2147483647) {
+      this.fail('invalid relative input'); return;
+    }
+    // Coalesce unsent X/Y motion, but never cross a button or wheel transition.
+    if (code === 0 || code === 1) {
+      for (let i = this.pending.length - 1; i >= 0; i--) {
+        const event = this.pending[i];
+        if (event.device !== 1 || event.event_type !== 2 || event.code > 1) break;
+        if (event.code === code) {
+          const sum = event.value + value;
+          if (sum < -2147483648 || sum > 2147483647) { this.fail('relative input overflow'); return; }
+          event.value = sum; return;
+        }
+      }
+    }
+    this.enqueue({ event_type: 2, code, value, device: 1 });
+  }
+
+  release(device?: number) {
+    const keys = [...this.physical].filter(id => device === undefined || Math.floor(id / 65536) === device);
+    for (const id of keys) this.physical.delete(id);
+    for (const id of keys) {
       if (this.error) break;
-      this.enqueue(key(code, 0));
+      this.enqueue({ ...key(id % 65536, 0), device: Math.floor(id / 65536) });
     }
   }
 
   dispose() { this.closed = true; this.release(); }
 
-  private async send(events: DesktopInputEvent[]) {
+  private async send(events: DesktopInputEvent[], device: number) {
     for (let retry = 0; ; retry++) {
-      const ack = await this.submit(events);
+      const ack = await this.submit(events, device);
       if (ack.status === 0 && ack.accepted === events.length) { this.batches++; return; }
       if (ack.status === 3 && ack.accepted === 0 && retry < 3) {
         await new Promise(resolve => setTimeout(resolve, 20));
@@ -89,13 +113,17 @@ export class GuestKeyboard {
     this.running = true; this.publish();
     try {
       while (this.pending.length && !this.error) {
-        const events = this.pending.splice(0, 63);
+        const device = this.pending[0].device;
+        let count = 1;
+        while (count < 63 && count < this.pending.length && this.pending[count].device === device) count++;
+        const events = this.pending.splice(0, count).map(({ event_type, code, value }) => ({ event_type, code, value }));
         // A lost reply may follow a consumed press. Retain it for explicit recovery.
-        for (const event of events) if (event.value !== 0) this.possible.add(event.code);
-        await this.send([...events, sync()]);
+        for (const event of events) if (event.event_type === 1 && event.value !== 0) this.possible.add(device * 65536 + event.code);
+        await this.send([...events, sync()], device);
         for (const event of events) {
-          if (event.value === 0) this.possible.delete(event.code);
-          else this.possible.add(event.code);
+          if (event.event_type !== 1) continue;
+          if (event.value === 0) this.possible.delete(device * 65536 + event.code);
+          else this.possible.add(device * 65536 + event.code);
         }
       }
     } catch (e) { this.fail(e); }
@@ -106,11 +134,13 @@ export class GuestKeyboard {
     if (this.running || this.closed || !this.error) return;
     this.running = true; this.publish();
     try {
-      const codes = [...this.possible];
-      for (let offset = 0; offset < codes.length; offset += 63) {
-        const chunk = codes.slice(offset, offset + 63);
-        await this.send([...chunk.map(code => key(code, 0)), sync()]);
-        for (const code of chunk) this.possible.delete(code);
+      for (const device of [0, 1]) {
+        const codes = [...this.possible].filter(id => Math.floor(id / 65536) === device);
+        for (let offset = 0; offset < codes.length; offset += 63) {
+          const chunk = codes.slice(offset, offset + 63);
+          await this.send([...chunk.map(id => key(id % 65536, 0)), sync()], device);
+          for (const id of chunk) this.possible.delete(id);
+        }
       }
       this.error = null;
     } catch (e) { this.fail(e); }
