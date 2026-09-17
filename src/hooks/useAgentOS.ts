@@ -5,6 +5,7 @@ import type {
   InputEvent, GuestCreateRequest, GuestCreateResult, SessionInfo, SessionStatus,
   SessionSendResult, SessionRecvResult, FaultInjectResult, TrafficEvent,
   GuestLifecycleResult, TraceDumpResult, TraceEntry, TraceStatus,
+  DesktopInputEvent, InputBatchAck,
 } from '../types';
 
 export interface AgentOSState {
@@ -231,6 +232,14 @@ export function useAgentOS() {
     [],
   );
 
+  // Await each batch before sending the next. A rejected promise has an
+  // unknown remote outcome and must never cause an automatic input replay.
+  const submitInput = useCallback(
+    (handle: number, device: 0 | 1, events: DesktopInputEvent[]) =>
+      invoke<InputBatchAck>('cc_input_submit', { handle, device, events }),
+    [],
+  );
+
   const deviceStatus = useCallback(
     (devType: number, devHandle: number) =>
       invoke<DeviceStatusInfo>('cc_device_status', { devType, devHandle }),
@@ -332,6 +341,7 @@ export function useAgentOS() {
     resumeGuest,
     destroyGuest,
     sendInput,
+    submitInput,
     deviceStatus,
     createGuest,
     listSessions,

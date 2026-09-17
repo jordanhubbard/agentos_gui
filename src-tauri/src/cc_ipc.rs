@@ -13,6 +13,9 @@ use std::io::{self, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod desktop_input;
+pub use desktop_input::{DesktopInputEvent, InputBatchAck};
+
 // ── MSG_CC_* opcodes (from agentos.h) ────────────────────────────────────────
 pub const MSG_CC_CONNECT: u32 = 0x2601;
 pub const MSG_CC_DISCONNECT: u32 = 0x2602;
@@ -39,6 +42,7 @@ pub const MSG_CC_TRACE_START: u32 = 0x2616;
 pub const MSG_CC_TRACE_STOP: u32 = 0x2617;
 pub const MSG_CC_TRACE_QUERY: u32 = 0x2618;
 pub const MSG_CC_TRACE_DUMP: u32 = 0x2619;
+pub const MSG_CC_INPUT_SUBMIT: u32 = 0x261E;
 
 // ── Device type constants (CC_DEV_TYPE_*) ────────────────────────────────────
 pub const CC_DEV_TYPE_SERIAL: u32 = 0;
@@ -722,6 +726,9 @@ impl CcClient {
         }
 
         if let Err(err) = self.stream.write_all(&req).map_err(Self::cc_io_error) {
+            // A partial frame cannot be resumed by another command. In
+            // particular, input might already have been accepted remotely.
+            let _ = self.stream.shutdown(std::net::Shutdown::Both);
             let msg = err.to_string();
             self.record_traffic(
                 opcode,
@@ -742,6 +749,7 @@ impl CcClient {
             .read_exact(&mut reply)
             .map_err(Self::cc_io_error)
         {
+            let _ = self.stream.shutdown(std::net::Shutdown::Both);
             let msg = err.to_string();
             self.record_traffic(
                 opcode,
@@ -791,7 +799,8 @@ impl CcClient {
         }
 
         let has_ok_mr = opcode_has_ok_mr(opcode);
-        let ok = error.is_none() && (!has_ok_mr || reply_mr[0] == 0);
+        let ok = error.is_none() && (!has_ok_mr || reply_mr[0] == 0)
+            && (opcode != MSG_CC_INPUT_SUBMIT || reply_mr[2] == 0);
 
         self.traffic.push_back(TrafficEvent {
             seq: self.next_traffic_seq,
@@ -848,6 +857,7 @@ fn opcode_name(opcode: u32) -> &'static str {
         MSG_CC_TRACE_STOP => "TRACE_STOP",
         MSG_CC_TRACE_QUERY => "TRACE_QUERY",
         MSG_CC_TRACE_DUMP => "TRACE_DUMP",
+        MSG_CC_INPUT_SUBMIT => "INPUT_SUBMIT",
         _ => "UNKNOWN",
     }
 }
@@ -877,6 +887,7 @@ fn opcode_has_ok_mr(opcode: u32) -> bool {
             | MSG_CC_TRACE_STOP
             | MSG_CC_TRACE_QUERY
             | MSG_CC_TRACE_DUMP
+            | MSG_CC_INPUT_SUBMIT
     )
 }
 
@@ -889,6 +900,7 @@ fn reply_shmem_len(opcode: u32, mr: [u32; 4]) -> u32 {
         MSG_CC_GUEST_STATUS if mr[0] == 0 => 32,
         MSG_CC_DEVICE_STATUS if mr[0] == 0 => 16,
         MSG_CC_TRACE_DUMP if mr[0] == 0 => mr[2].min(CC_SHMEM_SIZE as u32),
+        MSG_CC_INPUT_SUBMIT if mr[0] == 0 => mr[1].min(CC_SHMEM_SIZE as u32),
         _ => 0,
     }
 }

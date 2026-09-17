@@ -4,13 +4,16 @@
 #   make build        build the native desktop app
 #   make run          run the app against a local agentOS CC-PD socket
 
-.PHONY: all build run dev check test deps clean help
+.PHONY: all build run dev check test test-rust deps clean help
 
 APP_BIN       := src-tauri/target/release/agentos-gui
 AGENTOS_DIR   ?= $(abspath ../agentos)
 CC_PD_SOCK    ?= $(AGENTOS_DIR)/build/cc_pd.sock
 CC_PD_SOCK_ABS := $(abspath $(CC_PD_SOCK))
 DEPS_STAMP    := node_modules/.deps-stamp
+# The app bundle format is macOS-only. Linux's run target uses the native
+# executable directly; packaging can be requested with TAURI_BUILD_FLAGS.
+TAURI_BUILD_FLAGS ?= $(if $(filter Darwin,$(shell uname -s)),--bundles app,--no-bundle)
 
 all: run
 
@@ -21,7 +24,7 @@ $(DEPS_STAMP): package.json package-lock.json
 	@touch $@
 
 build: deps
-	@npm run build -- --bundles app
+	@npm run build -- $(TAURI_BUILD_FLAGS)
 
 run:
 	@if [ ! -x "$(APP_BIN)" ]; then \
@@ -52,6 +55,9 @@ check: deps
 test: deps
 	@npm test
 
+test-rust:
+	@cargo test --manifest-path src-tauri/Cargo.toml --lib
+
 clean:
 	@rm -rf dist src-tauri/target src-tauri/gen
 	@echo "✓ Clean."
@@ -67,6 +73,7 @@ help:
 	@echo "  make dev              Run Tauri dev mode against the same socket"
 	@echo "  make check            Type-check frontend"
 	@echo "  make test             Run Playwright tests"
+	@echo "  make test-rust        Test the native binary protocol bridge"
 	@echo "  make clean            Remove frontend/Tauri build artifacts"
 	@echo ""
 	@echo "Overrides:"

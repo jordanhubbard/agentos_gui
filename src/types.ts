@@ -81,6 +81,18 @@ export interface InputEvent {
   btn_mask:   number;
 }
 
+// platform/input.h v1: Linux evdev payload, ending in one SYN_REPORT.
+export interface DesktopInputEvent {
+  event_type: number;
+  code: number;
+  value: number;
+}
+
+export interface InputBatchAck {
+  status: 0 | 1 | 2 | 3; // accepted, bad request, denied, would block
+  accepted: number;
+}
+
 export interface FaultInjectResult {
   result:            number;
   ticks_to_recovery: number;
@@ -135,6 +147,7 @@ export const GUEST_STATE: Record<number, string> = {
   4: 'Running',
   5: 'Suspended',
   6: 'Dead',
+  7: 'Destroying',
 };
 
 export const OS_TYPE: Record<number, string> = {
