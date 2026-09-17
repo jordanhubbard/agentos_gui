@@ -75,8 +75,16 @@ Input batches are bounded and acknowledged in order. A rejected or uncertain
 delivery stops further input. **Release guest keys** sends releases for keys
 that may have reached the guest, without replaying presses. If the connection
 has failed, releases cannot be guaranteed; guest-side recovery may be needed.
-Host-reserved shortcuts may never reach the app. IME composition and graphical
-pointer input are not implemented.
+Host-reserved shortcuts may never reach the app. IME composition is not implemented.
+
+**Capture pointer** locks relative mouse input to the displayed guest and hides
+the host cursor. Escape releases capture. Movement, five mouse buttons and
+horizontal/vertical wheels use the guest's virtio-input pointer. Keyboard and
+pointer events share one ordered queue, preserving modifier/click order.
+Losing capture releases held buttons. Capture failures are shown explicitly.
+Motion is relative, with host and guest pointer acceleration still applicable;
+the GUI does not promise that host and guest cursor coordinates match. Wheel
+input accumulates one detent per 100 browser pixels, three lines, or one page.
 
 Live display currently transfers full snapshots and can take tens of seconds
 per frame on Spark. This is not yet a responsive remote desktop.
