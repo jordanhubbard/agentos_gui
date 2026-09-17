@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 use tauri::State;
 
 use crate::cc_ipc::{
-    CcClient, DeviceInfo, DeviceStatusInfo, FaultInjectResult, GuestCreateRequest,
-    GuestCreateResult, GuestInfo, GuestLifecycleResult, GuestStatus, InputEvent, PoecatStatus,
+    CcClient, DesktopInputEvent, DeviceInfo, DeviceStatusInfo, FaultInjectResult, GuestCreateRequest,
+    GuestCreateResult, GuestInfo, GuestLifecycleResult, GuestStatus, InputBatchAck, InputEvent, PoecatStatus,
     SessionInfo, SessionRecvResult, SessionSendResult, SessionStatus, SnapResult, TraceDumpResult,
     TraceStatus, TrafficEvent, CC_DEV_TYPE_COUNT,
 };
@@ -202,6 +202,22 @@ pub async fn cc_traffic_events(
 }
 
 // ── Guests ────────────────────────────────────────────────────────────────────
+
+/// One atomic virtio-input batch. Callers must await its acknowledgment before
+/// submitting the next batch; only status 3 (zero accepted) permits a retry.
+#[tauri::command]
+pub async fn cc_input_submit(
+    handle: u32,
+    device: u32,
+    events: Vec<DesktopInputEvent>,
+    state: State<'_, AppState>,
+) -> Result<InputBatchAck, String> {
+    with_client(state.client.clone(), move |c: &mut CcClient| {
+        c.input_submit(handle, device, &events)
+            .map_err(|e| e.to_string())
+    })
+    .await
+}
 
 #[tauri::command]
 pub async fn cc_list_guests(state: State<'_, AppState>) -> Result<Vec<GuestInfo>, String> {

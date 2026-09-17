@@ -27,6 +27,7 @@ pub fn run() {
             commands::cc_list_polecats,
             commands::cc_log_stream,
             commands::cc_send_input,
+            commands::cc_input_submit,
             commands::cc_get_sock_path,
             commands::cc_should_autoconnect,
             commands::cc_device_status,
