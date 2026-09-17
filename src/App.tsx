@@ -5,6 +5,7 @@ import { ConnectDialog } from './components/ConnectDialog';
 import { Sidebar, type Tab } from './components/Sidebar';
 import { GuestCard } from './components/GuestCard';
 import { GuestConsole } from './components/GuestConsole';
+import { GuestDisplay } from './components/GuestDisplay';
 import { GuestLauncher } from './components/GuestLauncher';
 import { DevicePanel } from './components/DevicePanel';
 import { LogViewer } from './components/LogViewer';
@@ -156,6 +157,7 @@ export default function App() {
                     ))}
                   </div>
                   <div className="min-w-0 space-y-5">
+                    {selectedGuest && <GuestDisplay key={selectedGuest.guest_handle} guest={selectedGuest} />}
                     <GuestConsole
                       guest={selectedGuest}
                       chunks={state.consoleChunks}

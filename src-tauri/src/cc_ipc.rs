@@ -15,6 +15,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod desktop_input;
 pub use desktop_input::{DesktopInputEvent, InputBatchAck};
+mod frame_capture;
+pub use frame_capture::FrameInfo;
 
 // ── MSG_CC_* opcodes (from agentos.h) ────────────────────────────────────────
 pub const MSG_CC_CONNECT: u32 = 0x2601;
@@ -43,6 +45,7 @@ pub const MSG_CC_TRACE_STOP: u32 = 0x2617;
 pub const MSG_CC_TRACE_QUERY: u32 = 0x2618;
 pub const MSG_CC_TRACE_DUMP: u32 = 0x2619;
 pub const MSG_CC_INPUT_SUBMIT: u32 = 0x261E;
+pub const MSG_CC_FRAME_CAPTURE: u32 = 0x261D;
 
 // ── Device type constants (CC_DEV_TYPE_*) ────────────────────────────────────
 pub const CC_DEV_TYPE_SERIAL: u32 = 0;
@@ -230,6 +233,7 @@ pub struct CcClient {
     session_id: u32,
     traffic: VecDeque<TrafficEvent>,
     next_traffic_seq: u64,
+    frame: Option<frame_capture::Snapshot>,
 }
 
 impl CcClient {
@@ -242,6 +246,7 @@ impl CcClient {
             session_id: 0,
             traffic: VecDeque::with_capacity(CC_TRAFFIC_MAX),
             next_traffic_seq: 0,
+            frame: None,
         };
 
         // MSG_CC_CONNECT — establish session
@@ -800,7 +805,7 @@ impl CcClient {
 
         let has_ok_mr = opcode_has_ok_mr(opcode);
         let ok = error.is_none() && (!has_ok_mr || reply_mr[0] == 0)
-            && (opcode != MSG_CC_INPUT_SUBMIT || reply_mr[2] == 0);
+            && (!matches!(opcode, MSG_CC_INPUT_SUBMIT | MSG_CC_FRAME_CAPTURE) || reply_mr[2] == 0);
 
         self.traffic.push_back(TrafficEvent {
             seq: self.next_traffic_seq,
@@ -858,6 +863,7 @@ fn opcode_name(opcode: u32) -> &'static str {
         MSG_CC_TRACE_QUERY => "TRACE_QUERY",
         MSG_CC_TRACE_DUMP => "TRACE_DUMP",
         MSG_CC_INPUT_SUBMIT => "INPUT_SUBMIT",
+        MSG_CC_FRAME_CAPTURE => "FRAME_CAPTURE",
         _ => "UNKNOWN",
     }
 }
@@ -888,6 +894,7 @@ fn opcode_has_ok_mr(opcode: u32) -> bool {
             | MSG_CC_TRACE_QUERY
             | MSG_CC_TRACE_DUMP
             | MSG_CC_INPUT_SUBMIT
+            | MSG_CC_FRAME_CAPTURE
     )
 }
 
@@ -901,6 +908,7 @@ fn reply_shmem_len(opcode: u32, mr: [u32; 4]) -> u32 {
         MSG_CC_DEVICE_STATUS if mr[0] == 0 => 16,
         MSG_CC_TRACE_DUMP if mr[0] == 0 => mr[2].min(CC_SHMEM_SIZE as u32),
         MSG_CC_INPUT_SUBMIT if mr[0] == 0 => mr[1].min(CC_SHMEM_SIZE as u32),
+        MSG_CC_FRAME_CAPTURE if mr[0] == 0 => mr[1].min(CC_SHMEM_SIZE as u32),
         _ => 0,
     }
 }
