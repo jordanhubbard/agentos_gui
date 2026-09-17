@@ -61,6 +61,26 @@ For hot-reload development, use:
 make dev
 ```
 
+## Guest display and keyboard
+
+Use an agentOS profile with GPU and input devices, such as
+`make run GUEST_OS=debian-graphics-input`. After the guest exposes its
+framebuffer, capture a frame or start live display. Click the displayed frame
+to send physical keyboard events to that guest; its keyboard layout controls
+the resulting text. `Ctrl+Alt+Escape` releases focus. Changing focus or guests
+queues releases for held keys. The console below remains a separate serial
+input path.
+
+Input batches are bounded and acknowledged in order. A rejected or uncertain
+delivery stops further input. **Release guest keys** sends releases for keys
+that may have reached the guest, without replaying presses. If the connection
+has failed, releases cannot be guaranteed; guest-side recovery may be needed.
+Host-reserved shortcuts may never reach the app. IME composition and graphical
+pointer input are not implemented.
+
+Live display currently transfers full snapshots and can take tens of seconds
+per frame on Spark. This is not yet a responsive remote desktop.
+
 ## Build
 
 ```sh
