@@ -23,11 +23,31 @@ Consumers must await each acknowledgment before submitting the next batch.
 The bridge performs no automatic retries. The existing bounded traffic ring
 records batch size, response status, and round-trip duration.
 
+## Frame capture
+
+The Guests view can capture one immutable display frame. `cc_frame_capture`
+returns dimensions, byte count, a decimal sequence string, and a process-local
+token. `cc_frame_read` returns binary XRGB8888 bytes, at most 4056 per call;
+`cc_frame_release` frees the snapshot. The bridge validates dimensions, bounds,
+cookie, sequence and metadata on every reply. Tokens are not server cookies
+and cannot be reused after reconnect even if a rebooted server repeats a cookie.
+
+The view runs one capture at a time and awaits each chunk, releasing the socket
+lock between reads. It presents only complete frames, converts BGRX bytes to
+opaque canvas RGBA, and reports transferred bytes and elapsed time. Cancellation,
+guest switching and component teardown stop further reads and release the token
+after the outstanding call completes. Transport and release errors stay visible.
+
+The [Spark native capture receipt](evidence/2026-09-17-spark-frame.json) records
+two real captures over CC-PD, including a blue guest virtual terminal with
+visible proof text. The 3 MiB pattern capture took 86.8 seconds with normal
+status polling active. This qualifies still-frame display, not desktop latency.
+
 ## Remaining integration
 
-This bridge is not yet a desktop viewer. The next layer must consume immutable
-frame captures, release their cookies, reject stale work after reconnect or
-guest replacement, render XRGB8888 pixels, and manage keyboard/pointer focus.
+This is a still-frame viewer, not yet an interactive remote desktop. The next
+layer must manage keyboard/pointer focus, ordered bounded input delivery, and
+continuous refresh without queueing work behind a slow frame transfer.
 The observer contract currently requires reads of at most 4056 pixel bytes per
 round trip, so throughput and input latency need measurement on a live target.
 
@@ -36,9 +56,10 @@ bounded binary transfers, ordered input acknowledgment, and per-operation
 telemetry. Its JSON envelope and drawing-command protocol are not the agentOS
 CC ABI. Frame and input operations here remain separate contracts.
 
-Validation of this bridge uses Unix socket pairs and exact request/reply
-bytes. These host tests do not prove input delivery into a running guest;
-that requires a GUI-to-agentOS target test after the viewer is connected.
+Validation uses Unix socket pairs and exact request/reply bytes, plus browser
+tests checking actual canvas pixels, cancellation and transfer errors. These
+host tests do not prove display or input delivery against a running guest;
+that requires a GUI-to-agentOS target test.
 Run `make test-rust`, `make check`, and `make test`; `make build` validates
 the native release executable. Linux builds need GTK 3 and WebKitGTK 4.1
 development packages. macOS keeps its app bundle, while Linux builds the

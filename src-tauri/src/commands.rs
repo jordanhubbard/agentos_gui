@@ -6,7 +6,7 @@ use crate::cc_ipc::{
     CcClient, DesktopInputEvent, DeviceInfo, DeviceStatusInfo, FaultInjectResult, GuestCreateRequest,
     GuestCreateResult, GuestInfo, GuestLifecycleResult, GuestStatus, InputBatchAck, InputEvent, PoecatStatus,
     SessionInfo, SessionRecvResult, SessionSendResult, SessionStatus, SnapResult, TraceDumpResult,
-    TraceStatus, TrafficEvent, CC_DEV_TYPE_COUNT,
+    TraceStatus, TrafficEvent, FrameInfo, CC_DEV_TYPE_COUNT,
 };
 
 type ClientCell = Arc<Mutex<Option<CcClient>>>;
@@ -202,6 +202,22 @@ pub async fn cc_traffic_events(
 }
 
 // ── Guests ────────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn cc_frame_capture(handle: u32, state: State<'_, AppState>) -> Result<FrameInfo, String> {
+    with_client(state.client.clone(), move |c| c.frame_capture(handle).map_err(|e| e.to_string())).await
+}
+
+#[tauri::command]
+pub async fn cc_frame_read(token: String, offset: u32, length: u32, state: State<'_, AppState>) -> Result<tauri::ipc::Response, String> {
+    let bytes = with_client(state.client.clone(), move |c| c.frame_read(&token, offset, length).map_err(|e| e.to_string())).await?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+#[tauri::command]
+pub async fn cc_frame_release(token: String, state: State<'_, AppState>) -> Result<(), String> {
+    with_client(state.client.clone(), move |c| c.frame_release(&token).map_err(|e| e.to_string())).await
+}
 
 /// One atomic virtio-input batch. Callers must await its acknowledgment before
 /// submitting the next batch; only status 3 (zero accepted) permits a retry.

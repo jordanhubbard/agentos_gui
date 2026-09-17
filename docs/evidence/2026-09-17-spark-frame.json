@@ -1,0 +1,35 @@
+{
+  "schema": "agentos_gui.native_frame_evidence.v1",
+  "host": "sparky",
+  "host_arch": "aarch64",
+  "gui_commit": "fc7a4f38d37aefa3ea15ef721fd781dd8c0dcddd",
+  "gui_executable_sha256": "d4aacbfc7d685896d6efbead3a4e82c44af0217bb519eb94c31858c40cf3190b",
+  "os_commit": "ee31681423e018d1fd8467c4aa3c467f2526dc0c",
+  "os_image_sha256": "f18874540b1d6aa75f8b2843500a76f2ca59c48e1994f03906824da3a6894a73",
+  "os_launch": "make run GUEST_OS=debian-graphics-input",
+  "gui_launch": "AGENTOS_GUI_AUTOCONNECT=1 CC_PD_SOCK=/tmp/agentos-v04-launch-fix/build/cc_pd.sock src-tauri/target/release/agentos-gui",
+  "renderer": "NVIDIA automatic non-DMA-BUF default; no explicit override",
+  "transport": "direct binary CC-PD Unix socket",
+  "guest": "Debian 13 ARM64, emulated virtio-gpu framebuffer, active tty1",
+  "pattern": "blue virtual terminal with text agentOS GUI framebuffer proof",
+  "guest_pixel_bytes_hex": "aa000000aa000000aa000000aa000000",
+  "captured_frame": {
+    "width": 1024,
+    "height": 768,
+    "sequence": "601",
+    "payload_bytes": 3145728,
+    "elapsed_seconds_shown_by_gui": 86.8,
+    "window_pixel_probe": {"x": 600, "y": 400, "rgb": [0, 0, 170]},
+    "window_screenshot_sha256": "7b91afa2e4c20d6e38a8733ed0bd92e30e58c1d5e2cf563256f627cf2220cd25",
+    "guest_pixel_readback_screenshot_sha256": "2c1042dc1b3e9f8cf57a7b18d862dc381a73e6471a4e97d3a3a218495166c30e"
+  },
+  "prior_capture": {"sequence": "109", "elapsed_seconds_shown_by_gui": 95.4, "content": "black framebuffer before test pattern"},
+  "retained_artifacts": "/tmp/agentos-gui-evidence-fc7a4f3",
+  "scope": "Native GUI capture and rendering, sequence advance, snapshot release allowing a second capture, and legacy console input used to prepare the pattern.",
+  "limitations": [
+    "Still-frame capture; latency is not suitable for interactive remote desktop use.",
+    "Graphical keyboard/pointer focus and ordered delivery remain unimplemented.",
+    "Visible text and one background pixel were checked; this is not a full-frame pixel equality proof.",
+    "No physical Spark display-device ownership or isolation claim."
+  ]
+}

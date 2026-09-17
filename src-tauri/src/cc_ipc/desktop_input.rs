@@ -125,6 +125,7 @@ mod tests {
                 session_id: 0,
                 traffic: VecDeque::new(),
                 next_traffic_seq: 0,
+                frame: None,
             },
             peer,
         )
