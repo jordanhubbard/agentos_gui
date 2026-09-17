@@ -4,6 +4,7 @@ mod commands;
 pub use commands::AppState;
 
 pub fn run() {
+    configure_webkit_renderer();
     tauri::Builder::default()
         .manage(commands::AppState::default())
         .invoke_handler(tauri::generate_handler![
@@ -40,4 +41,30 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn configure_webkit_renderer() {
+    #[cfg(target_os = "linux")]
+    {
+        // WebKit's DMA-BUF path can fail to allocate GBM buffers on NVIDIA,
+        // leaving a blank window despite a successful application startup.
+        // Choose the working renderer path before WebKit creates threads, and
+        // preserve an explicit operator setting (including "0").
+        if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_some() {
+            return;
+        }
+        let nvidia = std::fs::read_dir("/sys/class/drm")
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with("renderD"))
+            .any(|entry| {
+                std::fs::read_to_string(entry.path().join("device/vendor"))
+                    .is_ok_and(|vendor| vendor.trim().eq_ignore_ascii_case("0x10de"))
+            });
+        if nvidia {
+            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+            eprintln!("agentOS GUI: using WebKit without DMA-BUF on NVIDIA; WEBKIT_DISABLE_DMABUF_RENDERER overrides this default");
+        }
+    }
 }
