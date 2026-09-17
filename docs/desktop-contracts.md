@@ -65,16 +65,37 @@ guarantee or a confirmed scheduling diagnosis.
 
 ## Remaining integration
 
-This is a still-frame viewer, not yet an interactive remote desktop. The next
-layer must manage keyboard/pointer focus, ordered bounded input delivery, and
-continuous refresh without queueing work behind a slow frame transfer.
-The observer contract currently requires reads of at most 4056 pixel bytes per
-round trip, so throughput and input latency need measurement on a live target.
+Continuous refresh, keyboard focus, relative pointer capture, and a shared
+bounded input queue are now implemented. GUI PRs #5, #6, and #7 are merged.
+The [native refresh receipt](evidence/2026-09-17-live-display.json),
+[keyboard receipt](evidence/2026-09-17-guest-keyboard.json), and
+[pointer receipt](evidence/2026-09-17-guest-pointer.json) record successive guest
+frames and input arriving at guest evdev devices on Spark. Earlier receipts
+describe the limitations at their recorded revisions; later receipts qualify
+the added functionality.
+
+This does not yet qualify a responsive remote desktop. Recorded 1024 by 768
+captures take 27.8–34.6 seconds. Reads remain limited to 4056 pixel bytes per
+round trip. Remaining work includes reducing transfer latency, measuring input
+latency during refresh, qualifying interaction with a graphical guest application,
+and guaranteeing held-input cleanup after abrupt disconnection. Server-side
+presentation acknowledgment and incremental frame transfer are not implemented.
+The native pointer test qualifies release on Escape, not cleanup after a lost
+connection. These gaps remain part of the combined OS and GUI release review.
 
 Useful principles from the shared PythonOS/RubyOS RemoteOS-SDL service are
 bounded binary transfers, ordered input acknowledgment, and per-operation
 telemetry. Its JSON envelope and drawing-command protocol are not the agentOS
 CC ABI. Frame and input operations here remain separate contracts.
+
+RemoteOS-SDL protocol v2 also scopes handles to a connection, negotiates limits
+and features, and distinguishes ordered one-way operations from acknowledged
+operations. Its `frame.commit` combines presentation and event polling. These
+are useful design references for future agentOS contract changes, not capabilities
+that the current CC protocol already provides. In particular, an input batch
+acknowledgment must not be presented as proof that a guest application consumed
+the event or that its resulting frame appeared on screen. Track capture,
+transfer, presentation, and input timings separately when qualifying latency.
 
 Validation uses Unix socket pairs and exact request/reply bytes, plus browser
 tests checking actual canvas pixels, cancellation and transfer errors. These
