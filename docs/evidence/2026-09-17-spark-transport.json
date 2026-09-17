@@ -1,0 +1,115 @@
+{
+  "schema": "agentos_gui.transport_baseline.v1",
+  "host": "sparky Linux aarch64",
+  "os_commit": "ee31681423e018d1fd8467c4aa3c467f2526dc0c",
+  "image_sha256": "79e4ea8979dc655e9c373b1466b81860c7f76f6de27a363c4d8cdade0192d06f",
+  "os_command": "make run GUEST_OS=none FRAMEBUFFER_TEST=1",
+  "client_command": "make benchmark-frame CC_PD_SOCK=/tmp/agentos-v04-cc-latency/build/cc_pd.sock BENCH_GUEST_HANDLE=0xfb000000 BENCH_READS=128",
+  "limitations": [
+    "Native test surface, not a guest desktop",
+    "Repeated first region only, not full frame transfer",
+    "No GUI polling or input",
+    "Host load not controlled; second sample overlapped GUI checks"
+  ],
+  "runs": [
+    {
+      "capture_ms": 231.536732,
+      "frame": {
+        "bytes": 6400,
+        "height": 40,
+        "sequence": "1",
+        "token": "1",
+        "width": 40
+      },
+      "payload_bytes": 519168,
+      "pixels_stable": true,
+      "read_bytes": 4056,
+      "read_wall_ms": 8693.974694,
+      "reads": {
+        "count": 128,
+        "max_ms": 332.52918,
+        "mean_ms": 67.91399849218749,
+        "median_ms": 51.062743,
+        "min_ms": 19.745992,
+        "p95_ms": 140.98106099999998
+      },
+      "recorded_wire_ms": 8633,
+      "schema": "agentos_gui.frame_benchmark.v1",
+      "scope": "Repeated reads of one immutable snapshot region; no GUI polling or input",
+      "status": {
+        "count": 16,
+        "max_ms": 219.95037200000002,
+        "mean_ms": 52.849671937500005,
+        "median_ms": 30.644231,
+        "min_ms": 20.020619,
+        "p95_ms": 219.95037200000002
+      }
+    },
+    {
+      "capture_ms": 40.512923,
+      "frame": {
+        "bytes": 6400,
+        "height": 40,
+        "sequence": "1",
+        "token": "1",
+        "width": 40
+      },
+      "payload_bytes": 519168,
+      "pixels_stable": true,
+      "read_bytes": 4056,
+      "read_wall_ms": 14779.739128,
+      "reads": {
+        "count": 128,
+        "max_ms": 1934.549199,
+        "mean_ms": 115.45913434375001,
+        "median_ms": 70.744558,
+        "min_ms": 19.069696,
+        "p95_ms": 377.511835
+      },
+      "recorded_wire_ms": 14711,
+      "schema": "agentos_gui.frame_benchmark.v1",
+      "scope": "Repeated reads of one immutable snapshot region; no GUI polling or input",
+      "status": {
+        "count": 16,
+        "max_ms": 261.412282,
+        "mean_ms": 50.64704700000001,
+        "median_ms": 31.299695000000003,
+        "min_ms": 20.097595,
+        "p95_ms": 261.412282
+      }
+    },
+    {
+      "capture_ms": 30.474309,
+      "frame": {
+        "bytes": 6400,
+        "height": 40,
+        "sequence": "1",
+        "token": "1",
+        "width": 40
+      },
+      "payload_bytes": 519168,
+      "pixels_stable": true,
+      "read_bytes": 4056,
+      "read_wall_ms": 9282.691439,
+      "reads": {
+        "count": 128,
+        "max_ms": 450.833142,
+        "mean_ms": 72.51416764843754,
+        "median_ms": 60.987723,
+        "min_ms": 20.06942,
+        "p95_ms": 160.622619
+      },
+      "recorded_wire_ms": 9212,
+      "schema": "agentos_gui.frame_benchmark.v1",
+      "scope": "Repeated reads of one immutable snapshot region; no GUI polling or input",
+      "status": {
+        "count": 16,
+        "max_ms": 91.11454099999999,
+        "mean_ms": 36.768952125,
+        "median_ms": 31.096444,
+        "min_ms": 20.102124,
+        "p95_ms": 91.11454099999999
+      }
+    }
+  ]
+}

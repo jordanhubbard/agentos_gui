@@ -43,6 +43,26 @@ two real captures over CC-PD, including a blue guest virtual terminal with
 visible proof text. The 3 MiB pattern capture took 86.8 seconds with normal
 status polling active. This qualifies still-frame display, not desktop latency.
 
+### Transport latency probe
+
+Close the GUI and run `make benchmark-frame CC_PD_SOCK=/path/to/cc_pd.sock
+BENCH_GUEST_HANDLE=0xHANDLE BENCH_READS=128` (one shell command). Use the
+selected guest's public handle. The Rust example uses the production CC client,
+measures 16 status requests, captures a frame, repeatedly reads its first
+4056 bytes, checks that those immutable bytes stay identical, and releases it.
+It prints JSON containing wall time, recorded socket time, and latency
+distributions. It does not transfer the whole frame or measure input latency.
+
+For a smaller native producer, start agentOS with
+`make run GUEST_OS=none FRAMEBUFFER_TEST=1` and use handle `0xfb000000`.
+This test-only handle selects a 40 by 40 pixel surface; it is not a guest.
+The [Spark transport baseline](evidence/2026-09-17-spark-transport.json)
+records 128 reads taking 8.69 and 9.28 seconds without GUI polling. A third
+sample taken while host tests ran took 14.78 seconds. In every sample, over
+99% of read wall time was accounted for by socket calls. Host contention
+affects timing; these measurements establish a baseline, not a frame-rate
+guarantee or a confirmed scheduling diagnosis.
+
 ## Remaining integration
 
 This is a still-frame viewer, not yet an interactive remote desktop. The next
