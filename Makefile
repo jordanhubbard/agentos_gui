@@ -4,7 +4,7 @@
 #   make build        build the native desktop app
 #   make run          run the app against a local agentOS CC-PD socket
 
-.PHONY: all build run dev check test test-rust deps clean help
+.PHONY: all build run dev check test test-rust benchmark-frame deps clean help
 
 APP_BIN       := src-tauri/target/release/agentos-gui
 AGENTOS_DIR   ?= $(abspath ../agentos)
@@ -58,6 +58,11 @@ test: deps
 test-rust:
 	@cargo test --manifest-path src-tauri/Cargo.toml --lib
 
+BENCH_GUEST_HANDLE ?= 0
+BENCH_READS ?= 128
+benchmark-frame:
+	@cargo run --manifest-path src-tauri/Cargo.toml --example frame_benchmark -- "$(CC_PD_SOCK_ABS)" "$(BENCH_GUEST_HANDLE)" "$(BENCH_READS)"
+
 clean:
 	@rm -rf dist src-tauri/target src-tauri/gen
 	@echo "✓ Clean."
@@ -74,6 +79,7 @@ help:
 	@echo "  make check            Type-check frontend"
 	@echo "  make test             Run Playwright tests"
 	@echo "  make test-rust        Test the native binary protocol bridge"
+	@echo "  make benchmark-frame Measure CC status/frame latency (close GUI first)"
 	@echo "  make clean            Remove frontend/Tauri build artifacts"
 	@echo ""
 	@echo "Overrides:"
