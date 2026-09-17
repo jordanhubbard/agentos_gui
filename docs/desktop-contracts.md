@@ -59,3 +59,10 @@ Run `make test-rust`, `make check`, and `make test`; `make build` validates
 the native release executable. Linux builds need GTK 3 and WebKitGTK 4.1
 development packages. macOS keeps its app bundle, while Linux builds the
 executable used by `make run` without an installer by default.
+
+On Linux systems with an NVIDIA DRM render device, startup defaults
+`WEBKIT_DISABLE_DMABUF_RENDERER` to `1` before initializing WebKit. This avoids
+the blank window caused by failed GBM buffer allocation on Spark. An explicit
+environment value takes precedence; for example,
+`WEBKIT_DISABLE_DMABUF_RENDERER=0 make run` tests the default WebKit DMA-BUF path.
+Other GPU vendors and non-Linux platforms retain their normal renderer choice.
