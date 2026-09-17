@@ -38,6 +38,11 @@ opaque canvas RGBA, and reports transferred bytes and elapsed time. Cancellation
 guest switching and component teardown stop further reads and release the token
 after the outstanding call completes. Transport and release errors stay visible.
 
+The [Spark native capture receipt](evidence/2026-09-17-spark-frame.json) records
+two real captures over CC-PD, including a blue guest virtual terminal with
+visible proof text. The 3 MiB pattern capture took 86.8 seconds with normal
+status polling active. This qualifies still-frame display, not desktop latency.
+
 ## Remaining integration
 
 This is a still-frame viewer, not yet an interactive remote desktop. The next
