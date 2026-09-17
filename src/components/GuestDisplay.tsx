@@ -15,19 +15,36 @@ export function GuestDisplay({ guest }: { guest: GuestInfo }) {
   const cancel = useRef(false);
   const active = useRef(false);
   const mounted = useRef(true);
+  const watching = useRef(false);
+  const nextCapture = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [live, setLive] = useState(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [details, setDetails] = useState('No frame captured');
   const [error, setError] = useState<string | null>(null);
   const available = guest.state === 4 || guest.state === 5;
 
+  function stopWatching() {
+    watching.current = false;
+    cancel.current = true;
+    if (nextCapture.current !== null) clearTimeout(nextCapture.current);
+    nextCapture.current = null;
+    if (mounted.current) setLive(false);
+  }
+
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; cancel.current = true; };
+    const visibility = () => { if (document.hidden) stopWatching(); };
+    document.addEventListener('visibilitychange', visibility);
+    return () => {
+      mounted.current = false;
+      stopWatching();
+      document.removeEventListener('visibilitychange', visibility);
+    };
   }, []);
   useEffect(() => {
     if (!available) {
-      cancel.current = true;
+      stopWatching();
       const target = canvas.current;
       target?.getContext('2d')?.clearRect(0, 0, target.width, target.height);
       setDetails('Guest display unavailable');
@@ -81,7 +98,14 @@ export function GuestDisplay({ guest }: { guest: GuestInfo }) {
       active.current = false;
       if (mounted.current) {
         setBusy(false);
-        if (failure) setError(failure);
+        if (failure) { setError(failure); stopWatching(); }
+        else if (watching.current && !cancel.current) {
+          // Release has completed. Never queue captures behind a slow transfer.
+          nextCapture.current = setTimeout(() => {
+            nextCapture.current = null;
+            if (watching.current) void capture();
+          }, 250);
+        }
       }
     }
   }
@@ -89,15 +113,25 @@ export function GuestDisplay({ guest }: { guest: GuestInfo }) {
   return <section aria-label="Guest display" className="rounded-lg border border-os-border bg-os-surface p-4">
     <div className="mb-3 flex items-center justify-between gap-3">
       <h2 className="font-mono text-sm text-os-text">Guest display</h2>
+      <div className="flex gap-2">
       <button className="rounded border border-os-border px-3 py-1 text-xs text-os-text disabled:opacity-50"
-        disabled={!available} onClick={() => { if (busy) cancel.current = true; else void capture(); }}>
+        disabled={!available || (!live && busy)} aria-pressed={live}
+        onClick={() => {
+          if (live) stopWatching();
+          else { watching.current = true; setLive(true); void capture(); }
+        }}>
+        {live ? 'Stop live display' : 'Start live display'}
+      </button>
+      <button className="rounded border border-os-border px-3 py-1 text-xs text-os-text disabled:opacity-50"
+        disabled={!available || live} onClick={() => { if (busy) stopWatching(); else void capture(); }}>
         {busy ? `Cancel capture (${progress}%)` : 'Capture display'}
       </button>
+      </div>
     </div>
     <canvas ref={canvas} width={1} height={1} aria-label="Captured guest framebuffer"
       className="max-h-[32rem] w-full bg-black object-contain" />
     <p className="mt-2 font-mono text-xs text-os-muted">{details}</p>
-    <p className="mt-1 text-xs text-os-muted">Still frame; keyboard input is available in the console below.</p>
+    <p className="mt-1 text-xs text-os-muted">{live ? 'Live display updates after each complete transfer.' : 'Display updates are stopped.'} Keyboard input is available in the console below.</p>
     {error && <p role="alert" className="mt-2 text-xs text-red-400">{error}</p>}
   </section>;
 }

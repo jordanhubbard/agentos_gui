@@ -1,0 +1,26 @@
+{
+  "schema": "agentos_gui.live_display.v1",
+  "host": "sparky Linux aarch64",
+  "gui_revision": "ccd03a1",
+  "gui_binary_sha256": "bd729ec93e475c29f74eb27dfafd75bb2e165f1ba9bec869ea7efb43e7a8b2f6",
+  "os_revision": "a1dcfb06e0d6519731cc5f99385f9682c8bfb6b1",
+  "os_image_sha256": "1c7223c78837f8a04c13cc17b09271fab836c96f0e69183a58d1ae769aeae987",
+  "os_command": "make run GUEST_OS=debian-graphics-input",
+  "gui_command": "make run CC_PD_SOCK=/tmp/agentos-v04-debian-network/build/cc_pd.sock",
+  "result": "Native GUI automatically captures successive guest frames and observes a console-driven pattern change from blue to green; stopping returns controls to idle with the last complete frame retained.",
+  "captures": [
+    {"sequence": 182, "seconds": 27.8, "pattern": "BLUE", "screenshot_sha256": "0c3bc978571df2783fa3b4df2da7435c23a0a566b64be56a9fe504e9ba62edcf"},
+    {"sequence": 278, "seconds": 34.6, "pattern": "BLUE", "screenshot_sha256": "23bea3e2c19555361a3a2a8a1b3be4e90b750a76c479afef12e2414ac6e94ca0"},
+    {"sequence": 406, "seconds": 28.9, "pattern": "GREEN", "screenshot_sha256": "e297738b0d955ffcb0565aec2c386682758ff59eda738c73fc1c0e7fa5b62942"}
+  ],
+  "dimensions": {"width": 1024, "height": 768, "bytes": 3145728},
+  "stopped_screenshot_sha256": "89d2d7271518796500d3e436e35bf6262d40f62d22a49b945b176a1735a49d02",
+  "artifacts": "/tmp/agentos-gui-live-{first,second,green,stopped}.png on sparky",
+  "limitations": [
+    "Capture latency is unsuitable for a responsive desktop",
+    "Pattern changed through the guest console; graphical keyboard and pointer delivery remain unimplemented in the GUI",
+    "Visual pattern verification is not a whole-frame byte comparison",
+    "No server-side presentation acknowledgment or incremental frame transfer",
+    "No disk persistence, Intel guest or release qualification"
+  ]
+}
