@@ -41,7 +41,7 @@ test.describe('Guest list', () => {
     });
 
     test('Running state shown in emerald color', async ({ page }) => {
-      const runningBadge = page.getByText('Running');
+      const runningBadge = page.getByText('Running', { exact: true });
       await expect(runningBadge).toBeVisible();
       await expect(runningBadge).toHaveClass(/text-emerald-400/);
     });
