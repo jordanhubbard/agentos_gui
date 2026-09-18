@@ -63,6 +63,14 @@ make dev
 
 ## Guest display and keyboard
 
+Managed guest consoles follow the selected guest and keep separate bounded
+transcripts. They require agentOS's explicit public-handle console addressing
+mode (`3fcdf58` or later); automatic boot guests retain the original boot
+stream. The [native Intel receipt](docs/evidence/2026-09-18-intel-console.json)
+records Debian login, typed terminal echo and lifecycle controls over
+SSH-forwarded binary CC sockets. Long-session transcript rollover remains
+tracked separately; this is not desktop display qualification.
+
 Use an agentOS profile with GPU and input devices, such as
 `make run GUEST_OS=debian-graphics-input`. After the guest exposes its
 framebuffer, capture a frame or start live display. Click the displayed frame
