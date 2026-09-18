@@ -3,6 +3,11 @@ use super::{CcClient, MSG_CC_FRAME_CAPTURE};
 use serde::Serialize;
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
+
+const FRAME_WIRE_BYTES: u32 = 4056;
+const FRAME_BATCH_BYTES: u32 = 8 * FRAME_WIRE_BYTES;
+const FRAME_BATCH_BUDGET: Duration = Duration::from_millis(25);
 
 // Process-local tokens never expose or reuse a server cookie after reconnect.
 static NEXT_TOKEN: AtomicU64 = AtomicU64::new(1);
@@ -156,6 +161,51 @@ impl CcClient {
         Ok(reply.pixels)
     }
 
+    /// Aggregate bounded wire reads for one browser IPC response. Return a
+    /// nonempty prefix once the time budget expires, releasing the client lock
+    /// between batches so input and cancellation are not held behind a frame.
+    /// A single in-flight wire request still uses the ordinary socket timeout.
+    pub fn frame_read_batch(
+        &mut self,
+        token: &str,
+        offset: u32,
+        length: u32,
+    ) -> io::Result<Vec<u8>> {
+        self.frame_read_batch_budget(token, offset, length, FRAME_BATCH_BUDGET)
+    }
+
+    fn frame_read_batch_budget(
+        &mut self,
+        token: &str,
+        offset: u32,
+        length: u32,
+        budget: Duration,
+    ) -> io::Result<Vec<u8>> {
+        let snap = self.frame_snapshot(token)?;
+        if length == 0
+            || length > FRAME_BATCH_BYTES
+            || offset > snap.info.bytes
+            || length > snap.info.bytes - offset
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "frame batch exceeds snapshot bounds",
+            ));
+        }
+        let started = Instant::now();
+        let mut pixels = Vec::with_capacity(length as usize);
+        while pixels.len() < length as usize {
+            let done = pixels.len() as u32;
+            let bytes =
+                self.frame_read(token, offset + done, (length - done).min(FRAME_WIRE_BYTES))?;
+            pixels.extend_from_slice(&bytes);
+            if started.elapsed() >= budget {
+                break;
+            }
+        }
+        Ok(pixels)
+    }
+
     pub fn frame_release(&mut self, token: &str) -> io::Result<()> {
         let snap = self.frame_snapshot(token)?;
         // Even failed releases must not leave this client permanently busy.
@@ -227,6 +277,100 @@ mod tests {
         }
         expected[32..40].copy_from_slice(&cookie.to_le_bytes());
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn batches_exact_wire_chunks_without_changing_snapshot_pixels() {
+        let (mut client, mut peer) = pair();
+        let sized_reply = |pixels: &[u8]| {
+            let mut data = reply(5, pixels);
+            data[48..52].copy_from_slice(&1024u32.to_le_bytes());
+            data[52..56].copy_from_slice(&8u32.to_le_bytes());
+            data
+        };
+        let server = std::thread::spawn(move || {
+            request(&mut peer, 1, 1, 0, 0, 0);
+            peer.write_all(&sized_reply(&[])).unwrap();
+            for chunk in 0..8u32 {
+                let offset = chunk * FRAME_WIRE_BYTES;
+                request(&mut peer, 0, 2, 5, offset, FRAME_WIRE_BYTES);
+                let bytes: Vec<_> = (offset..offset + FRAME_WIRE_BYTES)
+                    .map(|i| (i % 251) as u8)
+                    .collect();
+                peer.write_all(&sized_reply(&bytes)).unwrap();
+            }
+            request(&mut peer, 0, 3, 5, 0, 0);
+            let mut released = sized_reply(&[]);
+            released[32..40].copy_from_slice(&0u64.to_le_bytes());
+            peer.write_all(&released).unwrap();
+        });
+        let frame = client.frame_capture(1).unwrap();
+        for (offset, length) in [
+            (0, 0),
+            (0, FRAME_BATCH_BYTES + 1),
+            (32767, 2),
+            (u32::MAX, 1),
+        ] {
+            assert!(client
+                .frame_read_batch(&frame.token, offset, length)
+                .is_err());
+        }
+        let pixels = client
+            .frame_read_batch_budget(&frame.token, 0, FRAME_BATCH_BYTES, Duration::MAX)
+            .unwrap();
+        assert_eq!(
+            pixels,
+            (0..FRAME_BATCH_BYTES)
+                .map(|i| (i % 251) as u8)
+                .collect::<Vec<_>>()
+        );
+        client.frame_release(&frame.token).unwrap();
+        assert!(client.frame_read_batch(&frame.token, 0, 4).is_err());
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn batch_yields_at_budget_and_rejects_mid_batch_metadata_changes() {
+        for fail in [false, true] {
+            let (mut client, mut peer) = pair();
+            let sized_reply = |pixels: &[u8]| {
+                let mut data = reply(5, pixels);
+                data[48..52].copy_from_slice(&1024u32.to_le_bytes());
+                data[52..56].copy_from_slice(&2u32.to_le_bytes());
+                data
+            };
+            let server = std::thread::spawn(move || {
+                request(&mut peer, 1, 1, 0, 0, 0);
+                peer.write_all(&sized_reply(&[])).unwrap();
+                request(&mut peer, 0, 2, 5, 0, FRAME_WIRE_BYTES);
+                peer.write_all(&sized_reply(&vec![7; FRAME_WIRE_BYTES as usize]))
+                    .unwrap();
+                if fail {
+                    request(&mut peer, 0, 2, 5, FRAME_WIRE_BYTES, FRAME_WIRE_BYTES);
+                    let mut bad = sized_reply(&vec![8; FRAME_WIRE_BYTES as usize]);
+                    bad[40] ^= 1;
+                    peer.write_all(&bad).unwrap();
+                }
+                request(&mut peer, 0, 3, 5, 0, 0);
+                let mut released = sized_reply(&[]);
+                released[32..40].copy_from_slice(&0u64.to_le_bytes());
+                peer.write_all(&released).unwrap();
+            });
+            let frame = client.frame_capture(1).unwrap();
+            let pixels = client.frame_read_batch_budget(
+                &frame.token,
+                0,
+                8192,
+                if fail { Duration::MAX } else { Duration::ZERO },
+            );
+            if fail {
+                assert!(pixels.is_err());
+            } else {
+                assert_eq!(pixels.unwrap(), vec![7; FRAME_WIRE_BYTES as usize]);
+            }
+            client.frame_release(&frame.token).unwrap();
+            server.join().unwrap();
+        }
     }
 
     #[test]

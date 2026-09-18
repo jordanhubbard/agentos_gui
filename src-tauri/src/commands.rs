@@ -210,7 +210,7 @@ pub async fn cc_frame_capture(handle: u32, state: State<'_, AppState>) -> Result
 
 #[tauri::command]
 pub async fn cc_frame_read(token: String, offset: u32, length: u32, state: State<'_, AppState>) -> Result<tauri::ipc::Response, String> {
-    let bytes = with_client(state.client.clone(), move |c| c.frame_read(&token, offset, length).map_err(|e| e.to_string())).await?;
+    let bytes = with_client(state.client.clone(), move |c| c.frame_read_batch(&token, offset, length).map_err(|e| e.to_string())).await?;
     Ok(tauri::ipc::Response::new(bytes))
 }
 
