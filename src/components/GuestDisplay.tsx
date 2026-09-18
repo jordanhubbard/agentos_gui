@@ -113,12 +113,13 @@ export function GuestDisplay({ guest }: { guest: GuestInfo }) {
       const pixels = new Uint8ClampedArray(frame.bytes);
       for (let offset = 0; offset < frame.bytes; ) {
         if (cancel.current) return;
-        const length = Math.min(4056, frame.bytes - offset);
+        const length = Math.min(8 * 4056, frame.bytes - offset);
         const data = await invoke<ArrayBuffer>('cc_frame_read', { token: frame.token, offset, length });
         const bytes = new Uint8Array(data);
-        if (bytes.length !== length) throw new Error('Incomplete frame transfer');
+        // Rust may yield a prefix to service input between bounded batches.
+        if (bytes.length === 0 || bytes.length > length) throw new Error('Invalid frame transfer length');
         pixels.set(bytes, offset);
-        offset += length;
+        offset += bytes.length;
         if (mounted.current) setProgress(Math.floor(offset * 100 / frame.bytes));
       }
       if (cancel.current || !mounted.current) return;

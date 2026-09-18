@@ -88,6 +88,11 @@ input accumulates one detent per 100 browser pixels, three lines, or one page.
 
 Live display currently transfers full snapshots and can take tens of seconds
 per frame on Spark. This is not yet a responsive remote desktop.
+The Rust bridge batches up to eight observer reads per browser IPC call and
+yields a partial batch after 25 ms, checked between wire replies. Cancellation
+and input can proceed between batches; an in-flight socket operation retains
+its normal timeout. Snapshot validation and the 4,112-byte CC frames are
+unchanged. Native latency improvement from batching remains unmeasured.
 
 ## Build
 
