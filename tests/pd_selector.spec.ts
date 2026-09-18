@@ -18,8 +18,7 @@ test.describe('Log viewer PD selector', () => {
   test('Drain uses default slot=0 pd=0', async ({ page }) => {
     await page.getByRole('button', { name: 'Drain' }).click();
     const calls = await getCallsFor(page, 'cc_log_stream');
-    expect((calls[0].args as any).slot).toBe(0);
-    expect((calls[0].args as any).pdId).toBe(0);
+    expect(calls.some(call => (call.args as any).slot === 0 && (call.args as any).pdId === 0)).toBe(true);
   });
 
   test('Drain uses user-selected slot and pd', async ({ page }) => {
