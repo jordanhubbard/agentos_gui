@@ -1,0 +1,24 @@
+{
+  "schema": "agentos_gui.ram_editor.v1",
+  "revision": "45c8be2",
+  "scope": "Launch-field editing and validation; no new guest resource-allocation claim",
+  "checks": {
+    "make_check_test": "Passed, terminal exit 0; 129 browser tests",
+    "browser_regression": "Typing 1, 0, 2, 4 preserves each partial edit and sends exactly 1024 MiB; empty, undersized, negative, fractional and overflowing values send no CREATE; correcting them to 128 succeeds",
+    "make_build": "Passed, terminal exit 0; native release binary",
+    "native": "Spark Tauri/WebKit under Xvfb :89 against the existing console_fixture Unix socket: replacing 512 by typing 1024 renders exactly 1024; clearing and pressing Start shows the validation error",
+    "binary_sha256": "8704b9ea80e9fdd3b0cb62b7688349261d7a829c9767b516bb660ffb6a9abaa1"
+  },
+  "artifact_directory": "/home/jkh/.local/share/agentos-evidence/2026-09-18-gui-ram-editor",
+  "artifacts": [
+    {"file": "agentos-gui-ram-check-test.log", "sha256": "da0def89a9f2e5377e75d1463c900a5af57a046fd20f7cb91f22ee8e853e913d"},
+    {"file": "agentos-gui-ram-build.log", "sha256": "a898937c73b16d9428d1dd2ee07126bc0611e98747c5125b08f1eda1794973f8"},
+    {"file": "agentos-gui-ram-typed-1024.png", "sha256": "4fa488558a9645cad769f332ba4378a509a21a19b4bcfb9d82bd4968900fb43d"},
+    {"file": "agentos-gui-ram-empty-rejected.png", "sha256": "8905137aee89865e36a2757cef1b2aa614a322b27179e8782e716bf554abd447"}
+  ],
+  "limitations": [
+    "Native UI fixture validation does not establish guest boot or resource admission",
+    "The prior real Intel two-boot GUI qualification remains scoped to GUI revision 93c4723 and core revision 3ea3554",
+    "Canonical integration and required checks remain pending"
+  ]
+}
