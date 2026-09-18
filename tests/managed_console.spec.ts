@@ -2,6 +2,54 @@ import { test, expect } from '@playwright/test';
 import { setupTauriMock, getCallsFor } from './helpers/tauri';
 import { connectApp } from './helpers/app';
 
+test('console keeps repeated chunks after retention rollover and resets on clear/reconnect', async ({ page }) => {
+  test.setTimeout(90_000);
+  await setupTauriMock(page);
+  await page.addInitScript(() => {
+    const w = window as any;
+    const original = w.__TAURI_INTERNALS__.invoke;
+    w.__nextConsole = '';
+    w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: any) => {
+      const result = await original(cmd, args);
+      if (cmd !== 'cc_log_stream') return result;
+      const text = w.__nextConsole;
+      w.__nextConsole = '';
+      return text;
+    };
+  });
+  await page.goto('/');
+  await connectApp(page);
+  const terminal = page.getByTestId('guest-terminal');
+  const rows = terminal.locator('.xterm-rows');
+  const drain = page.getByRole('button', { name: 'Drain', exact: true });
+  await terminal.scrollIntoViewIfNeeded();
+  for (let i = 0; i < 310; i++) {
+    await page.evaluate(() => { (window as any).__nextConsole = 'r'; });
+    await drain.click();
+  }
+  await expect.poll(async () => (await rows.innerText()).replace(/\s/g, '')).toBe('r'.repeat(310));
+  await page.evaluate(() => { (window as any).__nextConsole = '\r\nAFTER-ROLLOVER\r\n'; });
+  await drain.click();
+  await expect(rows).toContainText('AFTER-ROLLOVER');
+
+  await page.getByRole('button', { name: 'Logs', exact: true }).click();
+  await page.getByRole('button', { name: 'Clear', exact: true }).click();
+  await page.getByRole('button', { name: 'Guests', exact: true }).click();
+  await terminal.scrollIntoViewIfNeeded();
+  await expect(rows).not.toContainText('AFTER-ROLLOVER');
+  await page.evaluate(() => { (window as any).__nextConsole = 'AFTER-CLEAR\r\n'; });
+  await drain.click();
+  await expect(rows).toContainText('AFTER-CLEAR');
+
+  await page.getByRole('button', { name: 'Disconnect', exact: true }).click();
+  await connectApp(page);
+  await terminal.scrollIntoViewIfNeeded();
+  await expect(rows).not.toContainText('AFTER-CLEAR');
+  await page.evaluate(() => { (window as any).__nextConsole = 'AFTER-RECONNECT\r\n'; });
+  await drain.click();
+  await expect(rows).toContainText('AFTER-RECONNECT');
+});
+
 test('managed console selection keeps delayed output with its original guest', async ({ page }) => {
   await setupTauriMock(page);
   await page.addInitScript(() => {
@@ -33,6 +81,7 @@ test('managed console selection keeps delayed output with its original guest', a
   expect(calls.every(call => (call.args as any).slot !== 0)).toBe(true);
   expect(calls.some(call => (call.args as any).slot === 2 && (call.args as any).byHandle)).toBe(true);
   await page.getByText('Linux', { exact: true }).click();
+  await page.getByTestId('guest-terminal').scrollIntoViewIfNeeded();
   await expect(rows).toContainText('PRIMARY-ONLY');
   await expect(rows).not.toContainText('SECONDARY-ONLY');
 });
