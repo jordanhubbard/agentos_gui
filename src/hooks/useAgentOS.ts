@@ -20,7 +20,7 @@ export interface AgentOSState {
   traceStatus: TraceStatus | null;
   traceEvents: TraceEntry[];
   logLines:    string[];
-  consoleChunks: string[];
+  consoleChunks: Record<number, string[]>;
   error:       string | null;
   refreshing:  boolean;
 }
@@ -38,7 +38,7 @@ export function useAgentOS() {
     traceStatus: null,
     traceEvents: [],
     logLines:   [],
-    consoleChunks: [],
+    consoleChunks: {},
     error:      null,
     refreshing: false,
   });
@@ -46,6 +46,8 @@ export function useAgentOS() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const refreshRef = useRef(false);
   const logFetchRef = useRef(false);
+  const consoleFetchRef = useRef(false);
+  const connectionEpoch = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -60,6 +62,7 @@ export function useAgentOS() {
         if (!shouldAutoconnect) return;
 
         try {
+          connectionEpoch.current++;
           await invoke('cc_connect', { path: sockPath });
           if (!cancelled) {
             setState(s => ({
@@ -86,6 +89,7 @@ export function useAgentOS() {
 
   const connect = useCallback(async (path: string) => {
     try {
+      connectionEpoch.current++;
       await invoke('cc_connect', { path });
       setState(s => ({ ...s, connected: true, sockPath: path, error: null }));
       startPolling();
@@ -95,6 +99,7 @@ export function useAgentOS() {
   }, []);
 
   const disconnect = useCallback(async () => {
+    connectionEpoch.current++;
     stopPolling();
     try { await invoke('cc_disconnect'); } catch {}
     setState(s => ({
@@ -109,7 +114,7 @@ export function useAgentOS() {
       traceStatus: null,
       traceEvents: [],
       logLines: [],
-      consoleChunks: [],
+      consoleChunks: {},
     }));
   }, []);
 
@@ -182,7 +187,6 @@ export function useAgentOS() {
         setState(s => ({
           ...s,
           logLines: [...s.logLines, ...lines].slice(-500),
-          consoleChunks: [...s.consoleChunks, text].slice(-300),
           traffic: traffic ?? s.traffic,
         }));
       }
@@ -190,6 +194,31 @@ export function useAgentOS() {
     } catch {}
     finally { logFetchRef.current = false; }
     return '';
+  }, []);
+
+  const fetchConsole = useCallback(async (guest: GuestInfo) => {
+    if (consoleFetchRef.current) return '';
+    const epoch = connectionEpoch.current;
+    consoleFetchRef.current = true;
+    try {
+      const text = await invoke<string>('cc_log_stream', {
+        slot: guest.guest_handle, pdId: 0, byHandle: guest.guest_handle !== 0,
+      });
+      if (epoch !== connectionEpoch.current) return '';
+      if (text) setState(s => {
+        // A response always belongs to the guest requested, even if selection
+        // changed while the native socket operation was in flight.
+        if (!s.connected || !s.guests.some(g => g.guest_handle === guest.guest_handle)) return s;
+        const consoleChunks = Object.fromEntries(Object.entries(s.consoleChunks)
+          .filter(([handle]) => s.guests.some(g => g.guest_handle === Number(handle))));
+        consoleChunks[guest.guest_handle] = [...(consoleChunks[guest.guest_handle] ?? []), text].slice(-300);
+        return { ...s, consoleChunks };
+      });
+      return text;
+    } catch (e) {
+      if (epoch === connectionEpoch.current) setState(s => ({ ...s, error: String(e) }));
+      throw e;
+    } finally { consoleFetchRef.current = false; }
   }, []);
 
   const guestStatus = useCallback(
@@ -310,13 +339,12 @@ export function useAgentOS() {
   );
 
   const clearLogs = useCallback(() =>
-    setState(s => ({ ...s, logLines: [], consoleChunks: [] })), []);
+    setState(s => ({ ...s, logLines: [], consoleChunks: {} })), []);
 
   function startPolling() {
     if (pollRef.current) return;
     pollRef.current = setInterval(() => {
       refresh();
-      fetchLogs(0, 0);
     }, 2000);
     refresh();
   }
@@ -334,6 +362,7 @@ export function useAgentOS() {
     disconnect,
     refresh,
     fetchLogs,
+    fetchConsole,
     guestStatus,
     snapshot,
     restore,

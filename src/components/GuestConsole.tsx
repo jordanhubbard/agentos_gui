@@ -12,12 +12,10 @@ import {
 interface Props {
   guest: GuestInfo | null;
   chunks: string[];
-  onFetch: (slot: number, pdId: number) => Promise<string>;
+  onFetch: () => Promise<string>;
   onSendInput: (handle: number, event: InputEvent) => Promise<void>;
 }
 
-const CONSOLE_SLOT = 0;
-const CONSOLE_PD = 0;
 const encoder = new TextEncoder();
 
 export function GuestConsole({ guest, chunks, onFetch, onSendInput }: Props) {
@@ -118,7 +116,7 @@ export function GuestConsole({ guest, chunks, onFetch, onSendInput }: Props) {
     setBusy(true);
     setStatus(null);
     try {
-      const text = await onFetch(CONSOLE_SLOT, CONSOLE_PD);
+      const text = await onFetch();
       setStatus(text ? `${text.length} bytes` : '0 bytes');
     } catch (e) {
       setStatus(String(e));
@@ -168,7 +166,7 @@ export function GuestConsole({ guest, chunks, onFetch, onSendInput }: Props) {
         )}
         <button
           onClick={drain}
-          disabled={busy}
+          disabled={busy || !guest}
           title="Drain"
           className="flex h-8 items-center gap-2 rounded-lg border border-os-border px-3 font-mono text-xs
                      text-os-muted transition hover:border-os-accent/50 hover:text-os-accent
