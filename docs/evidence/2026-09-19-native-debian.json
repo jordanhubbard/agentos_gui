@@ -1,0 +1,28 @@
+{
+  "status": "passed real Debian native display, keyboard delivery and held-input cleanup on abrupt GUI termination",
+  "application_revision": "12d333b09c1c927f3d523638e33be49b92824e3b",
+  "agentos_revision": "cd9efb957fa3ce632cb5dc2c49c1ff082a5a580a",
+  "binary_sha256": "6bda035523d29bf2b31e36d6686f775ff7e61d27fe2c1c6a4c7a30577ab8dbd8",
+  "environment": "Spark Linux, isolated Xvfb :2 with Openbox, software GL, WebKit DMA-BUF disabled, separate D-Bus session",
+  "guest": "Retained make demo-debian-nocloud-graphics guest, handle 0, QEMU PID 2401522, stem wOmInT; pinned SSH port 12486",
+  "transport": "Direct binary CC Unix socket through agentOS; no HTTP bridge or synthetic fixture",
+  "observations": [
+    "make run automatically connected and rendered Linux handle 0 as Running.",
+    "Live display rendered the real 1024x768 Debian GNU/Linux 13 login screen. The preceding OS harness compared all 786432 QEMU scanout pixels with the exported frame.",
+    "make benchmark-native-input passed all 20 F12 transitions with live display enabled, complete guest evdev packet validation and no trailing events; exit 0.",
+    "A guest probe reported both F12 and left mouse button held before SIGKILL terminated application PID 2480031. The probe then passed exact keyboard and pointer release assertions; SSH exit 0. make run exit 2 was expected from the deliberate kill.",
+    "A fresh make run reconnected to the same retained guest and rendered its Running state. The guest QEMU process remained alive."
+  ],
+  "native_input_ms": {"median": 125.3346965, "p95": 348.593357, "max": 362.565157},
+  "measurement_scope": "X11 injection to validated guest receipt including SSH return and scheduling; paired samples are not one-way latency or a performance qualification",
+  "control": "First SSH-only control timed out before readiness. Its retained retry passed 20 receipts, median 299.6227295 ms, max 1088.207127 ms. No subtraction from native-input samples is justified.",
+  "disconnect_receipt": "AGENTOS_GUI_DISCONNECT_PASS keyboard=4 pointer=4 held_before_release=true",
+  "artifacts_directory": "/home/jkh/.local/share/agentos-evidence/2026-09-19-x86-ownership/gui-native-cd9efb9",
+  "sha256": {
+    "native-input-live.json": "70812f0f3a0efe985efe15f7a42c7ef8624cde1aa189856701213e78ebd72a8b",
+    "ssh-control-retry.json": "660ac16c340816c4060bf02933c87e2160c170df567251b4ecfef31897d5f6fe",
+    "disconnect.stdout": "55429a60e8a5d9c4b793060b7bfb399c4e9d9d92f116b8176f7feeb211a08d01",
+    "live.png": "1f625d108174b175ceb230dc83c730a7c0b451dfde41153c735ed576142a0694"
+  },
+  "limits": "Revision-specific automatic guest on QEMU/Xvfb. Does not prove physical input or GPU hardware, guest graphics recreation, final integrated release revision, or v0.4 completion. Pointer status text still displayed outside the guest during this run despite validated captured button delivery; that presentation issue remains to investigate."
+}
