@@ -4,7 +4,7 @@
 use serde_json::json;
 use std::{
     error::Error,
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, Write},
     process::{Child, Command, Stdio},
     sync::mpsc,
     time::{Duration, Instant},
@@ -25,14 +25,22 @@ impl Drop for Session {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    let mut args: Vec<_> = std::env::args_os().skip(1).collect();
+    let control = args.first().is_some_and(|arg| arg == "--ssh-control");
+    if control {
+        args.remove(0);
+    }
     if args.is_empty() {
-        return Err("usage: native_input_latency SSH_ARGS... HOST PROBE --gui-latency".into());
+        return Err("usage: native_input_latency [--ssh-control] SSH_ARGS... HOST PROBE --gui-latency|--ssh-control".into());
     }
     let mut session = Session {
         ssh: Command::new("ssh")
             .args(args)
-            .stdin(Stdio::null())
+            .stdin(if control {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::piped())
             .spawn()?,
         injected: false,
@@ -52,13 +60,24 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut measurements = Vec::new();
     for pair in 0..10 {
         let started = Instant::now();
-        session.injected = true;
-        if !Command::new("xdotool")
-            .args(["key", "F12"])
-            .status()?
-            .success()
-        {
-            return Err("native key injection failed".into());
+        if control {
+            let stdin = session.ssh.stdin.as_mut().ok_or("missing SSH stdin")?;
+            writeln!(
+                stdin,
+                "AGENTOS_INPUT_PING {}\nAGENTOS_INPUT_PING {}",
+                pair * 2 + 1,
+                pair * 2 + 2
+            )?;
+            stdin.flush()?;
+        } else {
+            session.injected = true;
+            if !Command::new("xdotool")
+                .args(["key", "F12"])
+                .status()?
+                .success()
+            {
+                return Err("native key injection failed".into());
+            }
         }
         for sequence in (pair * 2 + 1)..=(pair * 2 + 2) {
             let (received, line) = rx.recv_timeout(Duration::from_secs(3))?;
@@ -77,7 +96,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     // The trailing quiet-period assertion uses the emulated guest clock.
     // Keep it separate from the host-clock latency measurement above.
-    if rx.recv_timeout(Duration::from_secs(30))?.1? != "AGENTOS_GUI_LATENCY_PASS transitions=20" {
+    let expected = if control {
+        "AGENTOS_SSH_CONTROL_PASS receipts=20"
+    } else {
+        "AGENTOS_GUI_LATENCY_PASS transitions=20"
+    };
+    if rx.recv_timeout(Duration::from_secs(30))?.1? != expected {
         return Err("missing final guest assertion".into());
     }
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -103,7 +127,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         "{}",
         serde_json::to_string_pretty(&json!({
             "schema": "agentos_gui.native_input_latency.v1",
-        "scope": "X11 key-pair injection to guest evdev receipt; paired samples include SSH return and host scheduling, not one-way latency",
+        "mode": if control { "ssh_control" } else { "native_input" },
+        "scope": if control { "Host-to-guest SSH echo round trips, no GUI or evdev input; paired samples" } else { "X11 key-pair injection to guest evdev receipt; paired samples include SSH return and host scheduling, not one-way latency" },
             "samples_ms": measurements,
             "median_ms": (sorted[9] + sorted[10]) / 2.0,
             "p95_ms": sorted[18],
