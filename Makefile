@@ -63,6 +63,11 @@ BENCH_READS ?= 128
 benchmark-frame:
 	@cargo run --manifest-path src-tauri/Cargo.toml --example frame_benchmark -- "$(CC_PD_SOCK_ABS)" "$(BENCH_GUEST_HANDLE)" "$(BENCH_READS)"
 
+BENCH_ORDER ?= raw-first
+.PHONY: benchmark-frame-transfer
+benchmark-frame-transfer:
+	@cargo run --manifest-path src-tauri/Cargo.toml --example frame_transfer -- "$(CC_PD_SOCK_ABS)" "$(BENCH_GUEST_HANDLE)" "$(BENCH_ORDER)"
+
 clean:
 	@rm -rf dist src-tauri/target src-tauri/gen
 	@echo "✓ Clean."

@@ -112,3 +112,26 @@ the blank window caused by failed GBM buffer allocation on Spark. An explicit
 environment value takes precedence; for example,
 `WEBKIT_DISABLE_DMABUF_RENDERER=0 make run` tests the default WebKit DMA-BUF path.
 Other GPU vendors and non-Linux platforms retain their normal renderer choice.
+
+### Optional packed snapshot reads
+
+The native bridge mirrors agentOS `READ_PACKED` (observer operation 4,
+version 1). It requests a pixel-aligned prefix of the same immutable snapshot
+and validates the unchanged cookie, sequence and dimensions. The payload has
+an eight-byte little-endian decoded-length/encoding header, followed by raw
+XRGB bytes or nonzero pixel-count/XRGB runs. Decoding rejects truncated runs,
+trailing bytes, unknown encodings and expansion beyond the request or 64 KiB.
+The OS selects raw encoding when runs do not improve the returned prefix.
+
+GUI batches keep their existing 32448-byte and 25 ms bounds. They can now
+advance by more than 4056 decoded bytes per wire round trip; incomplete batches
+still return to release the client lock for input and cancellation. A legacy
+CC `INVALID_ARG` response to operation 4 disables packed reads for the current
+snapshot and uses the existing raw operation. Transport failures, malformed
+payloads and changed snapshot metadata never trigger silent fallback.
+
+`make benchmark-frame-transfer CC_PD_SOCK=... BENCH_GUEST_HANDLE=0`
+compares complete raw and GUI-batched transfers of one captured snapshot,
+requiring every decoded byte to match. `BENCH_ORDER=packed-first` reverses the
+order. This measures the production Rust client without native rendering or
+guest input; live interactive acceptance remains a separate requirement.
