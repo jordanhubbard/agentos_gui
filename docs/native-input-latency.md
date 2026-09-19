@@ -24,6 +24,24 @@ clock synchronization nor measure one-way latency. Paired samples are
 correlated; twenty samples are not a performance distribution qualification.
 The final guest quiet-period check runs outside the timed intervals.
 
+For stage timing, launch the native GUI with `AGENTOS_GUI_INPUT_TIMING=1`.
+Each input submission writes one `AGENTOS_INPUT_TIMING` line to stderr:
+`queue_us` covers blocking-worker scheduling and waiting for the shared CC
+socket; `request_us` covers encoding, request/reply and acknowledgment
+validation. `ok` means the client returned a valid acknowledgment, which can
+still report backpressure or denial. Guest delivery must still be asserted
+by the probe. No key codes, key values or text are logged. This diagnostic
+excludes frontend event handling and guest execution after acknowledgment;
+logging adds overhead, so retain the uninstrumented measurements separately.
+
+To measure the acknowledgment channel itself, prefix `BENCH_SSH_ARGS` with
+`--ssh-control` and also replace the remote probe's `--gui-latency` argument
+with `--ssh-control`. The host writes ordered ping pairs over SSH; the guest
+validates and echoes twenty receipts without opening evdev devices. The
+result includes `mode: "ssh_control"`. This measures both SSH directions and
+guest scheduling, so it must not simply be subtracted from native-input
+samples to claim one-way delivery latency.
+
 On Spark, 2026-09-19, the production GUI runtime `ae21ece` with packed-frame
 agentOS runtime `a9391b0` passed all twenty transitions with refresh running
 and stopped. The first live pass measured median 553.894 ms, p95 667.619 ms,
