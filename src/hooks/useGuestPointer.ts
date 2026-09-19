@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
-import type { GuestInput } from '../guestInput';
+import { wheelAxisSteps, type GuestInput } from '../guestInput';
 
 // DOM left/middle/right/back/forward to Linux BTN_LEFT/MIDDLE/RIGHT/SIDE/EXTRA.
 const buttons = [0x110, 0x112, 0x111, 0x113, 0x114];
@@ -46,8 +46,9 @@ export function useGuestPointer(canvas: RefObject<HTMLCanvasElement>, input: Ref
       if (!locked()) return;
       event.preventDefault(); event.stopPropagation();
       // Convert high-resolution browser deltas to integral evdev wheel detents.
-      const divisor = event.deltaMode === 1 ? 3 : event.deltaMode === 2 ? 1 : 100;
-      wx += event.deltaX / divisor; wy -= event.deltaY / divisor;
+      const native = event as WheelEvent & { wheelDeltaX?: number; wheelDeltaY?: number };
+      wx += wheelAxisSteps(event.deltaX, event.deltaMode, native.wheelDeltaX, event.isTrusted);
+      wy -= wheelAxisSteps(event.deltaY, event.deltaMode, native.wheelDeltaY, event.isTrusted);
       const x = Math.trunc(wx), y = Math.trunc(wy);
       wx -= x; wy -= y;
       input.current?.relative(6, x); input.current?.relative(8, y);

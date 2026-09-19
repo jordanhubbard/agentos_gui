@@ -1,5 +1,17 @@
 import type { DesktopInputEvent, InputBatchAck } from './types';
 
+// Native WebKit pixel deltas depend on its scroll step (84 px on Spark),
+// while its legacy wheel fields retain 120 units per wheel tick. Use only
+// trusted, whole ticks with a consistent sign; retain fractional accumulation
+// for high-resolution deltas and browsers without these optional fields.
+export function wheelAxisSteps(delta: number, mode: number, legacy: number | undefined, trusted: boolean): number {
+  if (mode === 0 && trusted && legacy !== undefined && Number.isFinite(legacy)
+    && legacy !== 0 && legacy % 120 === 0 && Math.sign(legacy) === -Math.sign(delta)) {
+    return -legacy / 120;
+  }
+  return delta / (mode === 1 ? 3 : mode === 2 ? 1 : 100);
+}
+
 // KeyboardEvent.code describes physical positions, matching Linux evdev keys.
 // Text composition and host keyboard layout translation are not sent as keys.
 export const evdevKeys: Readonly<Record<string, number>> = {
