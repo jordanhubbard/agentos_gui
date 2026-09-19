@@ -272,6 +272,17 @@ impl CcClient {
             if started.elapsed() >= budget {
                 break;
             }
+            // Packed raw prefixes carry 4048 bytes, not 4056. Avoid a tiny
+            // extra wire read just to fill this batch: the next batch can
+            // combine that tail with subsequent pixels. Finish actual frame
+            // tails and small explicit requests normally.
+            let remaining = length - pixels.len() as u32;
+            if length > FRAME_WIRE_BYTES
+                && offset + length < snap.info.bytes
+                && remaining < FRAME_WIRE_BYTES
+            {
+                break;
+            }
         }
         Ok(pixels)
     }
@@ -419,6 +430,54 @@ mod tests {
             client.frame_release(&frame.token).unwrap();
             server.join().unwrap();
         }
+    }
+
+    #[test]
+    fn packed_raw_tail_moves_to_next_batch_without_losing_pixels() {
+        let (mut client, mut peer) = pair();
+        let sized_reply = |pixels: &[u8]| {
+            let mut data = reply(5, pixels);
+            data[48..52].copy_from_slice(&1024u32.to_le_bytes());
+            data[52..56].copy_from_slice(&8u32.to_le_bytes());
+            data
+        };
+        let server = std::thread::spawn(move || {
+            request(&mut peer, 1, 1, 0, 0, 0);
+            peer.write_all(&sized_reply(&[])).unwrap();
+            for chunk in 0..9u32 {
+                let offset = chunk * 4048;
+                let (requested, returned) = if chunk < 8 {
+                    (FRAME_BATCH_BYTES - offset, 4048)
+                } else {
+                    (32768 - offset, 32768 - offset)
+                };
+                request(&mut peer, 0, 4, 5, offset, requested);
+                let mut packed = returned.to_le_bytes().to_vec();
+                packed.extend_from_slice(&0u32.to_le_bytes());
+                packed.extend((offset..offset + returned).map(|i| (i % 251) as u8));
+                peer.write_all(&sized_reply(&packed)).unwrap();
+            }
+            request(&mut peer, 0, 3, 5, 0, 0);
+            let mut released = sized_reply(&[]);
+            released[32..40].copy_from_slice(&0u64.to_le_bytes());
+            peer.write_all(&released).unwrap();
+        });
+        let frame = client.frame_capture(1).unwrap();
+        let mut pixels = client
+            .frame_read_batch_budget(&frame.token, 0, FRAME_BATCH_BYTES, Duration::MAX)
+            .unwrap();
+        assert_eq!(pixels.len(), 32384);
+        pixels.extend(
+            client
+                .frame_read_batch_budget(&frame.token, 32384, 384, Duration::MAX)
+                .unwrap(),
+        );
+        assert_eq!(
+            pixels,
+            (0..32768).map(|i| (i % 251) as u8).collect::<Vec<_>>()
+        );
+        client.frame_release(&frame.token).unwrap();
+        server.join().unwrap();
     }
 
     #[test]
