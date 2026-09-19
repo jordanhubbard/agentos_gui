@@ -68,6 +68,13 @@ BENCH_ORDER ?= raw-first
 benchmark-frame-transfer:
 	@cargo run --manifest-path src-tauri/Cargo.toml --example frame_transfer -- "$(CC_PD_SOCK_ABS)" "$(BENCH_GUEST_HANDLE)" "$(BENCH_ORDER)"
 
+# Focus a rendered native guest display before running. Include the remote
+# input probe command and --gui-latency at the end of BENCH_SSH_ARGS.
+.PHONY: benchmark-native-input
+benchmark-native-input:
+	@test -n "$(BENCH_SSH_ARGS)" || { echo 'Set BENCH_SSH_ARGS for the guest input probe'; exit 1; }
+	@cargo run --manifest-path src-tauri/Cargo.toml --example native_input_latency -- $(BENCH_SSH_ARGS)
+
 clean:
 	@rm -rf dist src-tauri/target src-tauri/gen
 	@echo "✓ Clean."
