@@ -17,6 +17,10 @@ TAURI_BUILD_FLAGS ?= $(if $(filter Darwin,$(shell uname -s)),--bundles app,--no-
 
 all: run
 
+.PHONY: test-x11-device-thread
+test-x11-device-thread:
+	@cargo test --manifest-path src-tauri/Cargo.toml -p tao --lib device::tests
+
 deps: $(DEPS_STAMP)
 
 $(DEPS_STAMP): package.json package-lock.json
