@@ -11,7 +11,7 @@
     "Live display rendered the real 1024x768 Debian GNU/Linux 13 login screen. The preceding OS harness compared all 786432 QEMU scanout pixels with the exported frame.",
     "make benchmark-native-input passed all 20 F12 transitions with live display enabled, complete guest evdev packet validation and no trailing events; exit 0.",
     "A guest probe reported both F12 and left mouse button held before SIGKILL terminated application PID 2480031. The probe then passed exact keyboard and pointer release assertions; SSH exit 0. make run exit 2 was expected from the deliberate kill.",
-    "A fresh make run reconnected to the same retained guest and rendered its Running state. The guest QEMU process remained alive."
+    "A fresh make run reconnected to the same retained guest, rendered its Running state and captured another 1024x768 frame. Alt-F4 then closed this second application normally; make run exited zero and PID 2502563 was absent. The guest QEMU process remained alive."
   ],
   "native_input_ms": {"median": 125.3346965, "p95": 348.593357, "max": 362.565157},
   "measurement_scope": "X11 injection to validated guest receipt including SSH return and scheduling; paired samples are not one-way latency or a performance qualification",
