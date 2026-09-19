@@ -70,6 +70,89 @@ const CC_SHMEM_SIZE: usize = 4096;
 const CC_REQ_SIZE: usize = 4 + 12 + CC_SHMEM_SIZE; // 4112
 const CC_REPLY_SIZE: usize = 16 + CC_SHMEM_SIZE; // 4112
 const CC_IO_TIMEOUT: Duration = Duration::from_secs(5);
+const CC_CONNECTION_MAGIC: u32 = 0x43435244;
+const CC_CONNECTION_VERSION: u32 = 1;
+const MSG_CC_CONNECTION_SYNC: u32 = 0x261f;
+
+fn read_cc_frame(stream: &mut UnixStream, frame: &mut [u8]) -> io::Result<()> {
+    let deadline = Instant::now() + CC_IO_TIMEOUT;
+    let mut offset = 0;
+    while offset < frame.len() {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "CC frame deadline"));
+        }
+        stream.set_read_timeout(Some(left))?;
+        match stream.read(&mut frame[offset..]) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "incomplete CC frame",
+                ))
+            }
+            Ok(n) => offset += n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
+fn write_cc_frame(stream: &mut UnixStream, frame: &[u8]) -> io::Result<()> {
+    let deadline = Instant::now() + CC_IO_TIMEOUT;
+    let mut offset = 0;
+    while offset < frame.len() {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "CC frame deadline"));
+        }
+        stream.set_write_timeout(Some(left))?;
+        match stream.write(&frame[offset..]) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    "incomplete CC frame",
+                ))
+            }
+            Ok(n) => offset += n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
+fn synchronize_connection(stream: &mut UnixStream) -> io::Result<()> {
+    let mut greeting = [0u8; CC_REPLY_SIZE];
+    read_cc_frame(stream, &mut greeting)?;
+    let words: Vec<u32> = greeting[..16]
+        .chunks_exact(4)
+        .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+        .collect();
+    if words[0] != CC_CONNECTION_MAGIC
+        || words[1] != CC_CONNECTION_VERSION
+        || (words[2] | words[3]) == 0
+        || greeting[16..].iter().any(|b| *b != 0)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid CC ready greeting",
+        ));
+    }
+    let mut sync = greeting;
+    sync[..4].copy_from_slice(&MSG_CC_CONNECTION_SYNC.to_le_bytes());
+    write_cc_frame(stream, &sync)?;
+    let mut reply = [0u8; CC_REPLY_SIZE];
+    read_cc_frame(stream, &mut reply)?;
+    greeting[..4].fill(0);
+    if reply != greeting {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid CC connection acknowledgment",
+        ));
+    }
+    Ok(())
+}
 const CC_TRAFFIC_MAX: usize = 512;
 const CC_TRACE_ENTRY_SIZE: usize = 16;
 
@@ -238,9 +321,10 @@ pub struct CcClient {
 
 impl CcClient {
     pub fn connect(sock_path: &str) -> io::Result<Self> {
-        let stream = UnixStream::connect(sock_path)?;
+        let mut stream = UnixStream::connect(sock_path)?;
         stream.set_read_timeout(Some(CC_IO_TIMEOUT))?;
         stream.set_write_timeout(Some(CC_IO_TIMEOUT))?;
+        synchronize_connection(&mut stream)?;
         let mut client = CcClient {
             stream,
             session_id: 0,
@@ -744,7 +828,7 @@ impl CcClient {
             req[16..16 + copy_len].copy_from_slice(&shmem_in[..copy_len]);
         }
 
-        if let Err(err) = self.stream.write_all(&req).map_err(Self::cc_io_error) {
+        if let Err(err) = write_cc_frame(&mut self.stream, &req).map_err(Self::cc_io_error) {
             // A partial frame cannot be resumed by another command. In
             // particular, input might already have been accepted remotely.
             let _ = self.stream.shutdown(std::net::Shutdown::Both);
@@ -763,11 +847,7 @@ impl CcClient {
         }
 
         let mut reply = [0u8; CC_REPLY_SIZE];
-        if let Err(err) = self
-            .stream
-            .read_exact(&mut reply)
-            .map_err(Self::cc_io_error)
-        {
+        if let Err(err) = read_cc_frame(&mut self.stream, &mut reply).map_err(Self::cc_io_error) {
             let _ = self.stream.shutdown(std::net::Shutdown::Both);
             let msg = err.to_string();
             self.record_traffic(
@@ -943,6 +1023,49 @@ fn millis_since(start: Instant) -> u64 {
 #[cfg(test)]
 mod console_tests {
     use super::*;
+
+    #[test]
+    fn bootstrap_requires_exact_generation_and_zero_payload() {
+        for mode in 0..5 {
+            let (mut stream, mut peer) = UnixStream::pair().unwrap();
+            let server = std::thread::spawn(move || {
+                peer.set_nonblocking(true).unwrap();
+                assert_eq!(
+                    peer.read(&mut [0u8; 1]).unwrap_err().kind(),
+                    io::ErrorKind::WouldBlock
+                );
+                peer.set_nonblocking(false).unwrap();
+                let mut greeting = [0u8; CC_REPLY_SIZE];
+                for (i, word) in [CC_CONNECTION_MAGIC, 1, 7, 9].iter().enumerate() {
+                    greeting[i * 4..i * 4 + 4].copy_from_slice(&word.to_le_bytes());
+                }
+                if mode == 1 {
+                    greeting[4] = 2;
+                }
+                if mode == 2 {
+                    greeting[8..16].fill(0);
+                }
+                if mode == 3 {
+                    greeting[CC_REPLY_SIZE - 1] = 1;
+                }
+                peer.write_all(&greeting).unwrap();
+                if mode == 0 || mode == 4 {
+                    let mut ack = [0u8; CC_REQ_SIZE];
+                    peer.read_exact(&mut ack).unwrap();
+                    greeting[..4].copy_from_slice(&MSG_CC_CONNECTION_SYNC.to_le_bytes());
+                    assert_eq!(ack, greeting);
+                    greeting[..4].fill(0);
+                    if mode == 4 {
+                        greeting[8] += 1;
+                    }
+                    peer.write_all(&greeting).unwrap();
+                }
+            });
+            assert_eq!(synchronize_connection(&mut stream).is_ok(), mode == 0);
+            drop(stream);
+            server.join().unwrap();
+        }
+    }
 
     #[test]
     fn public_handle_console_validates_wire_status_length_and_identity() {
