@@ -135,3 +135,14 @@ compares complete raw and GUI-batched transfers of one captured snapshot,
 requiring every decoded byte to match. `BENCH_ORDER=packed-first` reverses the
 order. This measures the production Rust client without native rendering or
 guest input; live interactive acceptance remains a separate requirement.
+
+The [Spark packed-frame receipt](https://github.com/jordanhubbard/agentos/blob/40d54c0/docs/evidence/2026-09-19-spark/packed-frame.json)
+records two complete 3 MiB comparisons with exact pixel equality: packed
+GUI batches took 1.24/1.41 seconds versus raw reads at 9.54/8.64 seconds.
+The native window displayed captures in 1.6–2.0 seconds, visibly delivered
+`packed-ui` keyboard input during live refresh, cleared it with Ctrl+U, and
+stopped and closed normally. This qualifies that mostly flat Debian console
+case. Varied desktop content, precise input-to-screen latency, pointer behavior
+and abrupt-disconnect cleanup remain outside this result. The receipt also
+preserves earlier cold-boot failures; their cause is not established by the
+successful run.
