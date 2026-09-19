@@ -1,0 +1,58 @@
+{
+  "schema": "agentos_gui.lifecycle_investigation.v1",
+  "task": "task_3bea4cc3256d495da091d83eda0d004a",
+  "host": "sparky Linux aarch64",
+  "gui_revision": "51509f95f1cef141a22660ec36b223890d07da2f",
+  "gui_binary_sha256": "8704b9ea80e9fdd3b0cb62b7688349261d7a829c9767b516bb660ffb6a9abaa1",
+  "os_revision": "eff5843463dd296b54120c56c6f4418bd0217c61",
+  "os_command": "make run GUEST_OS=debian-graphics-input SEL4_SDK_VERSION=2.3.0",
+  "gui_command": "DISPLAY=:1 strace -ff -tt -e trace=process -e signal=all -o /tmp/agentos-gui-lifecycle.trace make run APP_BIN=/home/jkh/Src/agentos_gui/src-tauri/target/release/agentos-gui CC_PD_SOCK=/tmp/agentos-x86-smp/build/cc_pd.sock",
+  "method": {
+    "terminal": "PTY",
+    "signal_monitor": "bpftrace tracepoint:signal:signal_generate filtered by target comm agentos-gui; records sender PID, comm and signal",
+    "monitor_control": "SIGCONT sent to GUI PID 4140278 was observed with sender bash PID 4144006",
+    "guest_setup": "Through the native console: modprobe virtio_gpu; modprobe virtio_input. A bounded 180-iteration guest shell loop writes a counter to /dev/tty1 every two seconds.",
+    "frame_transport": "Real binary CC-PD Unix socket; live capture enabled in native GUI",
+    "close": "xdotool windowactivate --sync 46137347 key alt+F4"
+  },
+  "observations": {
+    "application_pid": 4140278,
+    "last_live_elapsed_seconds": 935,
+    "application_exit_local_time": "2026-09-18T19:13:42-07:00",
+    "application_exit": "exit_group(0), exited with 0",
+    "make_exit_code": 0,
+    "guest_shutdown_exit_code": 0,
+    "terminating_signals_observed": 0,
+    "cgroup_oom_events": 0,
+    "cgroup_oom_kill_events": 0,
+    "last_main_process_rss_kib": 171208,
+    "frames": [
+      {"sequence": 329, "guest_counter": 6, "transfer_seconds": 18.2, "screenshot_sha256": "1ad51fad625828928393e235cf7c121fc83aa1726d4f305fda19b4bc0b9ac48d"},
+      {"sequence": 539, "guest_counter": 41, "transfer_seconds": 18.4, "screenshot_sha256": "8713aee380c9aa67f6f8e27ff7bc5c872395655d024c07bec22c3efc8fe34ea6"},
+      {"sequence": 1188, "guest_counter": 143, "transfer_seconds": 18.5, "screenshot_sha256": "8fa58a801457dfaaa4ea341467158eb81fec796ef9d06568734ba27bb1a12f11"}
+    ],
+    "frame_dimensions": "1024x768, 3072 KiB"
+  },
+  "historical_comparison": {
+    "original_gui_revision": "fc7a4f3",
+    "original_exit_code": 137,
+    "original_lifetime_seconds": 801.459467497,
+    "original_termination_utc": "2026-09-17T07:04:21.935Z",
+    "later_cleanup_utc": "2026-09-17T07:04:35.872Z",
+    "later_cleanup_result": "kill -TERM returned No such process; this cleanup did not cause the earlier SIGKILL"
+  },
+  "artifacts": {
+    "archive": "/home/jkh/.local/share/agentos-evidence/2026-09-19-gui-lifecycle/native-session.tar.gz",
+    "archive_sha256": "664d4ee6195330ee9ed3a507109db6415b33223b175a791f4d72651917f44558",
+    "main_trace_sha256": "67cb23b6e7c48e489c9f7e9a467ef046b31cedc85b92f0c4edf6951ea49026f9",
+    "signals_sha256": "475c0bc16104e476cf2a0d8b11e11b9d92a98a2f051226632e46be4c40e2c5cb"
+  },
+  "conclusion": "Live guest capture and normal window close passed in this run beyond the historical failure lifetime. Historical SIGKILL remains unexplained; no fix is claimed.",
+  "limitations": [
+    "Current binary, PTY and tracing differ from the historical non-PTY run; this is not an exact reproduction.",
+    "Signal monitor filters the main application comm, not WebKit worker processes.",
+    "Main-process RSS is not aggregate application memory; cgroup includes other terminal processes.",
+    "Observed frame transfer latency is not interactive desktop performance acceptance.",
+    "This does not qualify abrupt disconnect or held-input release."
+  ]
+}
