@@ -1,0 +1,30 @@
+{
+  "frame": {
+    "bytes": 3145728,
+    "height": 768,
+    "sequence": "3492",
+    "token": "1",
+    "width": 1024
+  },
+  "order": "raw-first",
+  "passes": [
+    {
+      "bytes": 3145728,
+      "client_calls": 122,
+      "milliseconds": 3195.573755,
+      "mode": "raw_batch_control",
+      "wire_requests": 776
+    },
+    {
+      "bytes": 3145728,
+      "client_calls": 141,
+      "milliseconds": 4013.5656160000003,
+      "mode": "gui_batch",
+      "wire_requests": 778
+    }
+  ],
+  "pixels_equal": true,
+  "reference_checked": true,
+  "schema": "agentos_gui.frame_transfer.v1",
+  "scope": "Full immutable snapshot, production CC client; no GUI rendering or input"
+}

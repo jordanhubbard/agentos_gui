@@ -1,6 +1,21 @@
 import { test, expect, type Page } from '@playwright/test';
 import { setupTauriMock, getCallsFor } from './helpers/tauri';
 import { connectApp } from './helpers/app';
+import { wheelAxisSteps } from '../src/guestInput';
+
+test('native wheel ticks preserve detents without rounding fractional sources', () => {
+  expect(wheelAxisSteps(-84, 0, 120, true)).toBe(-1);
+  expect(wheelAxisSteps(84, 0, -120, true)).toBe(1);
+  expect(wheelAxisSteps(-168, 0, 240, true)).toBe(-2);
+  expect(wheelAxisSteps(-84, 0, 120, false)).toBe(-0.84);
+  expect(wheelAxisSteps(-25, 0, 30, true)).toBe(-0.25);
+  expect(wheelAxisSteps(25, 0, undefined, true)).toBe(0.25);
+  expect(wheelAxisSteps(-84, 0, -120, true)).toBe(-0.84);
+  expect(wheelAxisSteps(-84, 0, NaN, true)).toBe(-0.84);
+  expect(wheelAxisSteps(0, 0, 120, true)).toBe(0);
+  expect(wheelAxisSteps(-3, 1, 120, true)).toBe(-1);
+  expect(wheelAxisSteps(-1, 2, 120, true)).toBe(-1);
+});
 
 async function prepare(page: Page) {
   await setupTauriMock(page, {
