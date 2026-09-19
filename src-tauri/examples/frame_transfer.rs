@@ -1,7 +1,35 @@
 //! Compare complete raw and GUI-batched reads of the same immutable snapshot.
 use agentos_gui_lib::cc_ipc::CcClient;
 use serde_json::json;
-use std::{error::Error, io::Read, time::Instant};
+use std::{
+    error::Error,
+    io::Read,
+    time::{Duration, Instant},
+};
+
+// Measurement control: match the GUI's byte/time bounds using legacy raw
+// reads, without changing the production client or its packing policy.
+fn raw_batch(
+    client: &mut CcClient,
+    token: &str,
+    offset: u32,
+    length: u32,
+) -> Result<Vec<u8>, Box<dyn Error>> {
+    let started = Instant::now();
+    let mut pixels = Vec::with_capacity(length as usize);
+    while pixels.len() < length as usize {
+        let done = pixels.len() as u32;
+        let chunk = client.frame_read(token, offset + done, (length - done).min(4056))?;
+        if chunk.is_empty() {
+            return Err("empty raw batch prefix".into());
+        }
+        pixels.extend_from_slice(&chunk);
+        if started.elapsed() >= Duration::from_millis(25) {
+            break;
+        }
+    }
+    Ok(pixels)
+}
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args().collect();
@@ -26,6 +54,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         None
     };
     let reference_checked = reference.is_some();
+    let raw_batch_control = match std::env::var("FRAME_RAW_BATCH") {
+        Ok(value) if value == "1" => true,
+        Err(std::env::VarError::NotPresent) => false,
+        _ => return Err("FRAME_RAW_BATCH must be unset or 1".into()),
+    };
     let mut client = CcClient::connect(&args[1])?;
     let frame = client.frame_capture(handle)?;
     let result = (|| -> Result<_, Box<dyn Error>> {
@@ -39,6 +72,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let mut passes = Vec::new();
         let packed_first = args[3] == "packed-first";
         for packed in [packed_first, !packed_first] {
+            let first_seq = client.traffic_events(Some(1)).last().unwrap().seq;
             let started = Instant::now();
             let mut pixels = Vec::with_capacity(frame.bytes as usize);
             let mut calls = 0u32;
@@ -47,6 +81,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let remaining = frame.bytes - offset;
                 let chunk = if packed {
                     client.frame_read_batch(&frame.token, offset, remaining.min(8 * 4056))?
+                } else if raw_batch_control {
+                    raw_batch(&mut client, &frame.token, offset, remaining.min(8 * 4056))?
                 } else {
                     client.frame_read(&frame.token, offset, remaining.min(4056))?
                 };
@@ -56,8 +92,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                 pixels.extend_from_slice(&chunk);
                 calls += 1;
             }
-            passes.push(json!({"mode": if packed {"gui_batch"} else {"raw"},
-                "milliseconds": started.elapsed().as_secs_f64()*1000.0,
+            let milliseconds = started.elapsed().as_secs_f64() * 1000.0;
+            let last_seq = client.traffic_events(Some(1)).last().unwrap().seq;
+            passes.push(json!({"mode": if packed {"gui_batch"} else if raw_batch_control {"raw_batch_control"} else {"raw"},
+                "milliseconds": milliseconds,
+                "wire_requests": last_seq.checked_sub(first_seq).ok_or("traffic sequence wrapped")?,
                 "client_calls": calls, "bytes": pixels.len()}));
             if let Some(previous) = &expected {
                 if previous != &pixels {
