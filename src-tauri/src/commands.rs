@@ -246,9 +246,20 @@ pub async fn cc_input_submit(
     events: Vec<DesktopInputEvent>,
     state: State<'_, AppState>,
 ) -> Result<InputBatchAck, String> {
+    // Diagnostic timing is opt-in and contains no key/button values. Queue
+    // time includes blocking-worker scheduling and waiting for frame/status
+    // calls to release the shared socket; acknowledgment is not evdev delivery.
+    let timing = env_flag_enabled("AGENTOS_GUI_INPUT_TIMING");
+    let started = std::time::Instant::now();
     with_client(state.client.clone(), move |c: &mut CcClient| {
-        c.input_submit(handle, device, &events)
-            .map_err(|e| e.to_string())
+        let acquired = std::time::Instant::now();
+        let result = c.input_submit(handle, device, &events).map_err(|e| e.to_string());
+        if timing {
+            eprintln!("AGENTOS_INPUT_TIMING device={} events={} queue_us={} request_us={} ok={}",
+                device, events.len(), acquired.duration_since(started).as_micros(),
+                acquired.elapsed().as_micros(), result.is_ok());
+        }
+        result
     })
     .await
 }

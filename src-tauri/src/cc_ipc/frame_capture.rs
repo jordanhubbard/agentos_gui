@@ -8,6 +8,8 @@ use std::time::{Duration, Instant};
 const FRAME_WIRE_BYTES: u32 = 4056;
 const FRAME_BATCH_BYTES: u32 = 8 * FRAME_WIRE_BYTES;
 const FRAME_BATCH_BUDGET: Duration = Duration::from_millis(25);
+const FRAME_PACKED_MAX: u32 = 65536;
+const CC_ERR_INVALID_ARG: u32 = 9;
 
 // Process-local tokens never expose or reuse a server cookie after reconnect.
 static NEXT_TOKEN: AtomicU64 = AtomicU64::new(1);
@@ -26,6 +28,7 @@ pub(super) struct Snapshot {
     info: FrameInfo,
     cookie: u64,
     sequence: u64,
+    packed_available: bool,
 }
 
 struct Response {
@@ -38,6 +41,40 @@ struct Response {
 
 fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
+}
+
+/// Decode the optional READ_PACKED prefix without accepting padding, zero
+/// runs, expansion beyond the request, or truncated records.
+fn decode_packed(wire: &[u8], limit: u32) -> io::Result<Vec<u8>> {
+    if wire.len() < 12 || wire.len() > FRAME_WIRE_BYTES as usize {
+        return Err(invalid("invalid packed frame size"));
+    }
+    let decoded = u32::from_le_bytes(wire[..4].try_into().unwrap());
+    let encoding = u32::from_le_bytes(wire[4..8].try_into().unwrap());
+    if decoded == 0 || decoded % 4 != 0 || decoded > limit || decoded > FRAME_PACKED_MAX {
+        return Err(invalid("invalid packed frame expansion"));
+    }
+    let body = &wire[8..];
+    match encoding {
+        0 if body.len() == decoded as usize => Ok(body.to_vec()),
+        1 if body.len() % 8 == 0 => {
+            let mut pixels = Vec::with_capacity(decoded as usize);
+            for run in body.chunks_exact(8) {
+                let count = u32::from_le_bytes(run[..4].try_into().unwrap());
+                if count == 0 || count > (decoded - pixels.len() as u32) / 4 {
+                    return Err(invalid("invalid packed frame run"));
+                }
+                for _ in 0..count {
+                    pixels.extend_from_slice(&run[4..]);
+                }
+            }
+            if pixels.len() != decoded as usize {
+                return Err(invalid("incomplete packed frame"));
+            }
+            Ok(pixels)
+        }
+        _ => Err(invalid("invalid packed frame encoding")),
+    }
 }
 
 impl CcClient {
@@ -60,7 +97,11 @@ impl CcClient {
         let long = |offset| u64::from_le_bytes(reply[offset..offset + 8].try_into().unwrap());
         if word(0) != 0 {
             return Err(io::Error::new(
-                io::ErrorKind::Other,
+                if op == 4 && word(0) == CC_ERR_INVALID_ARG {
+                    io::ErrorKind::Unsupported
+                } else {
+                    io::ErrorKind::Other
+                },
                 format!("CC_FRAME_CAPTURE rejected: {}", word(0)),
             ));
         }
@@ -83,7 +124,7 @@ impl CcClient {
                 format!("frame observer status {}", word(20)),
             ));
         }
-        if payload != length {
+        if op != 4 && payload != length {
             return Err(invalid("frame observer returned an unexpected byte count"));
         }
         Ok(Response {
@@ -91,7 +132,11 @@ impl CcClient {
             sequence: long(40),
             width: word(48),
             height: word(52),
-            pixels: reply[56..56 + payload as usize].to_vec(),
+            pixels: if op == 4 {
+                decode_packed(&reply[56..56 + payload as usize], length)?
+            } else {
+                reply[56..56 + payload as usize].to_vec()
+            },
         })
     }
 
@@ -126,6 +171,7 @@ impl CcClient {
             info: info.clone(),
             cookie: reply.cookie,
             sequence: reply.sequence,
+            packed_available: true,
         });
         Ok(info)
     }
@@ -159,6 +205,31 @@ impl CcClient {
             return Err(invalid("frame changed during immutable capture"));
         }
         Ok(reply.pixels)
+    }
+
+    fn frame_read_prefix(&mut self, token: &str, offset: u32, length: u32) -> io::Result<Vec<u8>> {
+        let snap = self.frame_snapshot(token)?;
+        if snap.packed_available && offset % 4 == 0 && length % 4 == 0 {
+            match self.observer(0, 4, snap.cookie, offset, length.min(FRAME_PACKED_MAX)) {
+                Ok(reply) => {
+                    if reply.cookie != snap.cookie
+                        || reply.sequence != snap.sequence
+                        || reply.width != snap.info.width
+                        || reply.height != snap.info.height
+                    {
+                        return Err(invalid("frame changed during packed capture"));
+                    }
+                    return Ok(reply.pixels);
+                }
+                Err(error) if error.kind() == io::ErrorKind::Unsupported => {
+                    // Only an explicit legacy CC rejection permits fallback.
+                    // Malformed data and transport errors propagate unchanged.
+                    self.frame.as_mut().unwrap().packed_available = false;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        self.frame_read(token, offset, length.min(FRAME_WIRE_BYTES))
     }
 
     /// Aggregate bounded wire reads for one browser IPC response. Return a
@@ -196,10 +267,20 @@ impl CcClient {
         let mut pixels = Vec::with_capacity(length as usize);
         while pixels.len() < length as usize {
             let done = pixels.len() as u32;
-            let bytes =
-                self.frame_read(token, offset + done, (length - done).min(FRAME_WIRE_BYTES))?;
+            let bytes = self.frame_read_prefix(token, offset + done, length - done)?;
             pixels.extend_from_slice(&bytes);
             if started.elapsed() >= budget {
+                break;
+            }
+            // Packed raw prefixes carry 4048 bytes, not 4056. Avoid a tiny
+            // extra wire read just to fill this batch: the next batch can
+            // combine that tail with subsequent pixels. Finish actual frame
+            // tails and small explicit requests normally.
+            let remaining = length - pixels.len() as u32;
+            if length > FRAME_WIRE_BYTES
+                && offset + length < snap.info.bytes
+                && remaining < FRAME_WIRE_BYTES
+            {
                 break;
             }
         }
@@ -279,6 +360,126 @@ mod tests {
         assert_eq!(actual, expected);
     }
 
+    fn reject_packed(peer: &mut UnixStream, length: u32) {
+        request(peer, 0, 4, 5, 0, length);
+        let mut rejected = [0u8; CC_REPLY_SIZE];
+        rejected[..4].copy_from_slice(&9u32.to_le_bytes());
+        peer.write_all(&rejected).unwrap();
+    }
+
+    #[test]
+    fn packed_decoder_rejects_invalid_expansion_and_accepts_exact_pixels() {
+        let run = [8, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 2, 1, 0];
+        assert_eq!(decode_packed(&run, 8).unwrap(), [3, 2, 1, 0, 3, 2, 1, 0]);
+        assert_eq!(
+            decode_packed(&[4, 0, 0, 0, 0, 0, 0, 0, 9, 8, 7, 6], 4).unwrap(),
+            [9, 8, 7, 6]
+        );
+        for len in 0..run.len() {
+            assert!(decode_packed(&run[..len], 8).is_err());
+        }
+        for (offset, value) in [
+            (0, 0),
+            (0, 7),
+            (0, 12),
+            (4, 2),
+            (8, 0),
+            (8, 1),
+            (8, 3),
+            (8, 255),
+        ] {
+            let mut bad = run;
+            bad[offset] = value;
+            assert!(decode_packed(&bad, 8).is_err());
+        }
+        assert!(decode_packed(&run, 4).is_err());
+        let mut trailing = run.to_vec();
+        trailing.extend_from_slice(&[0; 8]);
+        assert!(decode_packed(&trailing, 8).is_err());
+    }
+
+    #[test]
+    fn packed_batch_reconstructs_prefixes_and_does_not_mask_bad_replies() {
+        for malformed in [false, true] {
+            let (mut client, mut peer) = pair();
+            let server = std::thread::spawn(move || {
+                request(&mut peer, 1, 1, 0, 0, 0);
+                peer.write_all(&reply(5, &[])).unwrap();
+                request(&mut peer, 0, 4, 5, 0, 8);
+                let mut packed = vec![4, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 3, 2, 1, 0];
+                if malformed {
+                    packed[8] = 0;
+                }
+                peer.write_all(&reply(5, &packed)).unwrap();
+                if !malformed {
+                    request(&mut peer, 0, 4, 5, 4, 4);
+                    peer.write_all(&reply(5, &[4, 0, 0, 0, 0, 0, 0, 0, 7, 6, 5, 4]))
+                        .unwrap();
+                }
+                // Malformed replies must reach the caller without a raw retry.
+                request(&mut peer, 0, 3, 5, 0, 0);
+                peer.write_all(&reply(0, &[])).unwrap();
+            });
+            let frame = client.frame_capture(1).unwrap();
+            let pixels = client.frame_read_batch_budget(&frame.token, 0, 8, Duration::MAX);
+            if malformed {
+                assert_eq!(pixels.unwrap_err().kind(), io::ErrorKind::InvalidData);
+            } else {
+                assert_eq!(pixels.unwrap(), [3, 2, 1, 0, 7, 6, 5, 4]);
+            }
+            client.frame_release(&frame.token).unwrap();
+            server.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn packed_raw_tail_moves_to_next_batch_without_losing_pixels() {
+        let (mut client, mut peer) = pair();
+        let sized_reply = |pixels: &[u8]| {
+            let mut data = reply(5, pixels);
+            data[48..52].copy_from_slice(&1024u32.to_le_bytes());
+            data[52..56].copy_from_slice(&8u32.to_le_bytes());
+            data
+        };
+        let server = std::thread::spawn(move || {
+            request(&mut peer, 1, 1, 0, 0, 0);
+            peer.write_all(&sized_reply(&[])).unwrap();
+            for chunk in 0..9u32 {
+                let offset = chunk * 4048;
+                let (requested, returned) = if chunk < 8 {
+                    (FRAME_BATCH_BYTES - offset, 4048)
+                } else {
+                    (32768 - offset, 32768 - offset)
+                };
+                request(&mut peer, 0, 4, 5, offset, requested);
+                let mut packed = returned.to_le_bytes().to_vec();
+                packed.extend_from_slice(&0u32.to_le_bytes());
+                packed.extend((offset..offset + returned).map(|i| (i % 251) as u8));
+                peer.write_all(&sized_reply(&packed)).unwrap();
+            }
+            request(&mut peer, 0, 3, 5, 0, 0);
+            let mut released = sized_reply(&[]);
+            released[32..40].copy_from_slice(&0u64.to_le_bytes());
+            peer.write_all(&released).unwrap();
+        });
+        let frame = client.frame_capture(1).unwrap();
+        let mut pixels = client
+            .frame_read_batch_budget(&frame.token, 0, FRAME_BATCH_BYTES, Duration::MAX)
+            .unwrap();
+        assert_eq!(pixels.len(), 32384);
+        pixels.extend(
+            client
+                .frame_read_batch_budget(&frame.token, 32384, 384, Duration::MAX)
+                .unwrap(),
+        );
+        assert_eq!(
+            pixels,
+            (0..32768).map(|i| (i % 251) as u8).collect::<Vec<_>>()
+        );
+        client.frame_release(&frame.token).unwrap();
+        server.join().unwrap();
+    }
+
     #[test]
     fn batches_exact_wire_chunks_without_changing_snapshot_pixels() {
         let (mut client, mut peer) = pair();
@@ -291,6 +492,7 @@ mod tests {
         let server = std::thread::spawn(move || {
             request(&mut peer, 1, 1, 0, 0, 0);
             peer.write_all(&sized_reply(&[])).unwrap();
+            reject_packed(&mut peer, FRAME_BATCH_BYTES);
             for chunk in 0..8u32 {
                 let offset = chunk * FRAME_WIRE_BYTES;
                 request(&mut peer, 0, 2, 5, offset, FRAME_WIRE_BYTES);
@@ -342,6 +544,7 @@ mod tests {
             let server = std::thread::spawn(move || {
                 request(&mut peer, 1, 1, 0, 0, 0);
                 peer.write_all(&sized_reply(&[])).unwrap();
+                reject_packed(&mut peer, 8192);
                 request(&mut peer, 0, 2, 5, 0, FRAME_WIRE_BYTES);
                 peer.write_all(&sized_reply(&vec![7; FRAME_WIRE_BYTES as usize]))
                     .unwrap();
