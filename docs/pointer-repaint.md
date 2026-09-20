@@ -148,3 +148,26 @@ the failing presentation path to Cairo's Xlib SHM use. It does not yet identify
 the precise defect or distinguish a Cairo bug from an interaction with the
 server. The bypass is a private experiment, not a production dependency patch
 or a performance-qualified fix; system libraries remain unchanged.
+
+The unchanged production GUI (binary SHA-256
+`6bda035523d29bf2b31e36d6686f775ff7e61d27fe2c1c6a4c7a30577ab8dbd8`)
+was then run on the same MIT-SHM-enabled `:4` with this private library and
+the retained `cd9efb9` Debian guest. Process mappings confirmed the library.
+Live display showed the guest console; capture visibly added its focus border
+and transfer-progress pixels continued changing. Escape removed the border
+without a resize, and normal close exited successfully. The
+`production-no-shm-*` screenshots and log retain this application-level
+comparison. This verifies presentation behavior with the diagnostic bypass,
+not a production library rollout or new input-delivery/latency qualification.
+
+A narrower private build retained Cairo SHM initialization and image transfers
+but set `shm->has_pixmaps = 0`. It also passed the standalone reproduction on
+`:4`: captured JavaScript frames advanced from 2038 to 3024, native Cairo
+counters from 1968 to 2921, and Escape restored `outside` at frame 4061 / draw
+3921. Its library SHA-256 was
+`5f592d11f779152cfe7888cdabb206ee541b47cfd6966da3f7db7f043b13dbe8`.
+Mappings confirmed that library, and the process closed normally. The
+`cairo-no-shm-pixmaps/` archive retains its one-line behavioral change and
+evidence. Disabling shared pixmaps is sufficient for this reproduction;
+disabling all shared-memory image transfers is not necessary. The precise
+synchronization defect remains unresolved.
