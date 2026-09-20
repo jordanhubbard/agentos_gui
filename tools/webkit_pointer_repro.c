@@ -6,8 +6,20 @@
 
 static unsigned draw_count;
 static gboolean drawn(GtkWidget *view, cairo_t *context, gpointer data) {
-    (void)view; (void)context; (void)data;
+    (void)view; (void)data;
     ++draw_count;
+    if (getenv("AGENTOS_REPRO_PAINT")) {
+        cairo_save(context);
+        cairo_set_source_rgb(context, (draw_count / 60) % 2, 1, 0);
+        cairo_rectangle(context, 700, 400, 60, 60);
+        cairo_fill(context);
+        char count[32];
+        snprintf(count, sizeof(count), "%u", draw_count);
+        cairo_set_source_rgb(context, 0, 0, 0);
+        cairo_move_to(context, 702, 430);
+        cairo_show_text(context, count);
+        cairo_restore(context);
+    }
     return FALSE;
 }
 

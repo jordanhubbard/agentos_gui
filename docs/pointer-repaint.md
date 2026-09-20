@@ -34,6 +34,18 @@ This narrows the discrepancy to native presentation rather than document
 state or WebKit's snapshot rendering. Taking the snapshot does not repair the
 visible window.
 
+A native Cairo overlay narrows this further. Set `AGENTOS_REPRO_PAINT=1`
+with `AGENTOS_REPRO_REDRAW=1` to draw a colored square and the current draw
+counter after WebKit's draw callback. In the recorded run, two screenshots
+retained JavaScript frame 809 and native Cairo counter 783 while the diagnostic
+log advanced beyond 1,500 GTK draws. Both WebKit content and the additional
+native drawing therefore stopped reaching the screen. A separate capture and
+release cycle also showed that Escape released the lock in JavaScript but did
+not restore visible updates. This rules out a failure limited to WebKit's
+document pixels; it does not yet distinguish GTK buffering from X11 presentation.
+Screenshots and logs are archived under `standalone/agentos-cairo-count-*` and
+`standalone/agentos-webkit-cairo-count.log` in the evidence directory below.
+
 The reproduction also accepts `AGENTOS_REPRO_SOFTWARE=1` to select WebKit's
 NEVER hardware-acceleration policy and `AGENTOS_REPRO_REDRAW=1` to request a
 GTK redraw on each diagnostic message. Neither resolved the observed failure.
