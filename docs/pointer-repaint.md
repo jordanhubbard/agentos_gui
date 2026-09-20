@@ -107,3 +107,23 @@ The `agentos-gui-no-shm-*` screenshots and log are archived in the parent
 evidence directory. This verifies the workaround in the actual application;
 it does not requalify input delivery, latency, physical displays, or the final
 integrated release revision.
+
+## Private Cairo upgrade control
+
+An isolated build of unmodified Cairo 1.18.4 also reproduced the failure on
+the MIT-SHM-enabled display `:4`. The official source archive SHA-256 was
+`445ed8208a6e4823de1226a74ca319d3600e83f6369f99b14265006599c32ccb`.
+Meson 1.5.2 configured a release build with tests disabled and a private
+installation prefix; no system libraries were replaced. The unchanged
+standalone diagnostic ran with that prefix in `LD_LIBRARY_PATH`, software GL,
+DMA-BUF disabled, and its native Cairo overlay and redraw counter enabled.
+The process's `/proc` mappings confirmed it loaded the private `libcairo`.
+
+After capture, two screenshots retained `outside`, JavaScript frame 1465
+and native Cairo draw 1385, while the log advanced from JavaScript frame
+2558 / native draw 2470 to frame 3306 / draw 3193 with `locked:true`.
+This rules out upgrading to this Cairo release as a sufficient fix for the
+tested configuration. It does not identify which library causes the failure.
+The diagnostic was closed normally. Build logs, library mappings, diagnostic
+output and screenshots are archived in `cairo-1.18.4/` beneath the evidence
+directory above.
