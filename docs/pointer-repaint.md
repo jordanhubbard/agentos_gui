@@ -93,3 +93,17 @@ remained the full window after capture and reported success. Direct Xlib text
 drawing reached the screen while GTK/Cairo output remained stale, although
 that diagnostic itself also disturbed pre-capture rendering. Its result alone
 must not be treated as a faithful reproduction of the original trigger.
+
+The production GUI was then tested on display `:3` against the retained real
+Debian guest (`agentos-qemu-wOmInT`, OS revision `cd9efb9`). The unchanged GUI
+binary SHA-256 was
+`6bda035523d29bf2b31e36d6686f775ff7e61d27fe2c1c6a4c7a30577ab8dbd8`.
+Launched through `make run` with the guest's CC-PD socket, it displayed the
+1024x768 guest console. Capture visibly updated the focus border and
+`Pointer captured` status without a resize. While captured, completed guest
+frames advanced from 20855 to 20892. Escape visibly restored `Pointer is
+outside the guest` and removed the focus border. The app was closed normally.
+The `agentos-gui-no-shm-*` screenshots and log are archived in the parent
+evidence directory. This verifies the workaround in the actual application;
+it does not requalify input delivery, latency, physical displays, or the final
+integrated release revision.
