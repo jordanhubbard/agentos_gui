@@ -127,3 +127,24 @@ tested configuration. It does not identify which library causes the failure.
 The diagnostic was closed normally. Build logs, library mappings, diagnostic
 output and screenshots are archived in `cairo-1.18.4/` beneath the evidence
 directory above.
+
+## Cairo-only shared-memory bypass
+
+A private diagnostic build of the same Cairo 1.18.4 source returned immediately
+from `_cairo_xlib_display_init_shm` after setting `display->shm = NULL`.
+This was the only source change. The X server on `:4` still advertised MIT-SHM;
+the standalone program and remaining environment matched the failing control.
+Process mappings confirmed the private library was loaded. Its SHA-256 was
+`1c94091bfcef970c2d741cc1f0aa929a9d48d91b10ce755b78c8f0f43fc6ab9d`.
+
+Capture visibly changed the status to `captured`. Without resizing, screenshots
+advanced from JavaScript frame 2538 / native draw 2450 to frame 3538 / draw 3416.
+Escape visibly restored `outside`; the subsequent frame was 5590 / draw 5397.
+The process exited normally. Source diff, library mapping, extension query,
+build logs, diagnostic log and screenshots are retained under `cairo-no-shm/`.
+
+Together with the unmodified-library failure on the same display, this isolates
+the failing presentation path to Cairo's Xlib SHM use. It does not yet identify
+the precise defect or distinguish a Cairo bug from an interaction with the
+server. The bypass is a private experiment, not a production dependency patch
+or a performance-qualified fix; system libraries remain unchanged.
