@@ -60,3 +60,36 @@ Evidence is retained in
 The source and screenshots establish a failure outside the application;
 they do not identify the precise WebKit/GTK/X11 cause or prove a fix. Physical
 display and Wayland behavior remain untested.
+
+## MIT-SHM comparison
+
+Two fresh Xvfb displays were started with the same 1440x1200x24 screen,
+Openbox, diagnostic binary and application environment. Display `:3` used
+`-extension MIT-SHM`; display `:4` retained the default MIT-SHM extension.
+`xdpyinfo -queryExtensions` confirmed the extension difference.
+
+With MIT-SHM disabled, pointer capture visibly changed the status to
+`captured`; screenshots showed JavaScript frames advancing from 1565 to 2349
+and native Cairo draws advancing from 1512 to 2269 without any window resize.
+With MIT-SHM enabled, the control retained `outside`, frame 673 and native
+draw 602 while its log reported `locked:true` and more than 1300 callbacks.
+This is a successful environment workaround for the standalone reproduction,
+not yet a library fix or proof about physical displays.
+
+The bounded diagnostic display command is:
+
+```sh
+Xvfb :3 -screen 0 1440x1200x24 -nolisten tcp -extension MIT-SHM
+```
+
+Use an unused display number. This does not change an existing desktop's
+configuration. Screenshots and logs are retained under `standalone/` as
+`agentos-no-shm*`, `agentos-webkit-no-shm.log`, `agentos-shm-control.png`, and
+`agentos-webkit-shm-control.log`.
+
+Additional negative controls: disabling GTK double buffering, `GDK_GL=disable`,
+`gdk_display_flush`, and `XSync` did not restore presentation. Cairo clip extents
+remained the full window after capture and reported success. Direct Xlib text
+drawing reached the screen while GTK/Cairo output remained stale, although
+that diagnostic itself also disturbed pre-capture rendering. Its result alone
+must not be treated as a faithful reproduction of the original trigger.
