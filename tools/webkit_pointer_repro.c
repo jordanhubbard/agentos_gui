@@ -12,8 +12,11 @@ static void message(WebKitUserContentManager *manager, WebKitJavascriptResult *r
     (void)manager; (void)data;
     gchar *text = jsc_value_to_string(webkit_javascript_result_get_js_value(result));
     puts(text); fflush(stdout); g_free(text);
+    GtkWidget *view = g_object_get_data(G_OBJECT(manager), "view");
+    GdkFrameClock *clock = gtk_widget_get_frame_clock(view);
+    if (clock) { printf("gtk_frame=%" G_GINT64_FORMAT "\n", gdk_frame_clock_get_frame_counter(clock)); fflush(stdout); }
     if (getenv("AGENTOS_REPRO_REDRAW"))
-        gtk_widget_queue_draw(g_object_get_data(G_OBJECT(manager), "view"));
+        gtk_widget_queue_draw(view);
 }
 int main(int argc, char **argv) {
     gtk_init(&argc, &argv);

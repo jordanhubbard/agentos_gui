@@ -18,6 +18,11 @@ JSON printed once per second. On the failing path the JSON says `locked:true`,
 window remains visibly unchanged. Resize the window to reveal the updated
 state. Escape releases pointer lock; close the window to exit.
 
+The diagnostic also prints the GTK frame-clock counter. In the failing run
+both that counter and the JavaScript animation counter continued advancing
+after pointer capture. A stopped GTK frame clock therefore does not explain
+this reproduction; the visible pixels still remained stale.
+
 The reproduction also accepts `AGENTOS_REPRO_SOFTWARE=1` to select WebKit's
 NEVER hardware-acceleration policy and `AGENTOS_REPRO_REDRAW=1` to request a
 GTK redraw on each diagnostic message. Neither resolved the observed failure.
