@@ -5,6 +5,11 @@ Capture pointer can stop visible updates until the window is resized.
 The application's pointer state does update. A standalone GTK/WebKit program
 reproduces the failure without Tauri, React, our Tao patch or any guest IPC.
 
+The native Linux application now explicitly flushes the Cairo target surface
+after WebKit's draw callback. The standalone diagnostic enables the same
+operation with `AGENTOS_REPRO_FLUSH=1`; leave it unset for the failing control.
+The historical experiments below are retained to explain that choice.
+
 Run the standalone reproduction on a test display:
 
 ```sh
@@ -171,3 +176,36 @@ Mappings confirmed that library, and the process closed normally. The
 evidence. Disabling shared pixmaps is sufficient for this reproduction;
 disabling all shared-memory image transfers is not necessary. The precise
 synchronization defect remains unresolved.
+
+## Completing surface writes after drawing
+
+Adding `cairo_surface_flush(cairo_get_target(context))` after the standalone
+WebKit draw callback restored presentation with the system Cairo library and
+MIT-SHM enabled. While captured, visible JavaScript frames advanced from 1683
+to 2802 and native draw counters from 1624 to 2705. This completes pending
+surface writes instead of disabling shared pixmaps. The Linux native hook uses
+GTK's after-draw signal with the same operation; it does not handle input or
+change the CC transport. The standalone source and screenshots are archived
+under `surface-flush/`.
+
+A separate negative control with system Cairo and
+`CAIRO_DEBUG=xrender-version=-1.-1` stayed at visible frame 917 while logged
+frames advanced from 1810 to 2745. That runtime setting is not a workaround;
+its evidence is archived under `cairo-no-xrender/`.
+
+The rebuilt native GUI also passed on the MIT-SHM-enabled `:4`, using system
+`/usr/lib/aarch64-linux-gnu/libcairo.so.2.11800.0` without a private library or
+`CAIRO_DEBUG` override. Binary SHA-256:
+`44e2a488a68e00a7d637484ef23d8bdca3510795bd1f54f543d009ee3741af37`.
+Against the retained `cd9efb9` Debian guest, capture visibly showed the focus
+border and “Pointer captured”; completed guest frames advanced from 32147 to
+32186 without resizing. Escape removed the border and the settled screenshot
+showed “Pointer is outside the guest” at frame 32846. Normal Alt-F4 shutdown
+exited 0. The immediate Escape screenshot retains the intermediate state before
+the asynchronous pointer status settled.
+
+Native screenshots, process library mappings and logs are retained in
+`surface-flush/`. `make check`, all 130 browser tests, all 16 Rust tests,
+`cargo check` and `make build` passed. This qualifies the repaint correction on
+the software X11 display; it does not establish physical GPU performance or
+repeat the separate guest input-delivery qualification.

@@ -20,6 +20,8 @@ static gboolean drawn(GtkWidget *view, cairo_t *context, gpointer data) {
         cairo_show_text(context, count);
         cairo_restore(context);
     }
+    if (getenv("AGENTOS_REPRO_FLUSH"))
+        cairo_surface_flush(cairo_get_target(context));
     return FALSE;
 }
 
