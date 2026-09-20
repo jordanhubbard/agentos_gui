@@ -68,6 +68,12 @@ benchmark-frame:
 	@cargo run --manifest-path src-tauri/Cargo.toml --example frame_benchmark -- "$(CC_PD_SOCK_ABS)" "$(BENCH_GUEST_HANDLE)" "$(BENCH_READS)"
 
 BENCH_ORDER ?= raw-first
+.PHONY: diagnose-pointer-repaint
+diagnose-pointer-repaint:
+	@mkdir -p build
+	@$(CC) -Wall -Wextra tools/webkit_pointer_repro.c -o build/webkit-pointer-repro $$(pkg-config --cflags --libs webkit2gtk-4.1)
+	@build/webkit-pointer-repro
+
 .PHONY: benchmark-frame-transfer
 benchmark-frame-transfer:
 	@cargo run --manifest-path src-tauri/Cargo.toml --example frame_transfer -- "$(CC_PD_SOCK_ABS)" "$(BENCH_GUEST_HANDLE)" "$(BENCH_ORDER)"
