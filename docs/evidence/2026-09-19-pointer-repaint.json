@@ -1,0 +1,22 @@
+{
+  "status": "reproduced; unresolved native repaint failure",
+  "application_revision": "535ceaa",
+  "binary_sha256": "6bda035523d29bf2b31e36d6686f775ff7e61d27fe2c1c6a4c7a30577ab8dbd8",
+  "agentos_revision": "cd9efb957fa3ce632cb5dc2c49c1ff082a5a580a",
+  "environment": "Spark Linux, retained real Debian guest handle 0, isolated Xvfb :2 and Openbox; LIBGL_ALWAYS_SOFTWARE=1 and WEBKIT_DISABLE_DMABUF_RENDERER=1",
+  "observations": [
+    "Native application connected and captured a real Debian login frame. Scrolling exposed the pointer and keyboard status text.",
+    "Clicking Capture pointer left the visible status as outside the guest.",
+    "Resizing the native window from 1200x780 to 1201x781 revealed the focused canvas, Keyboard focused on guest, and Pointer captured. Escape releases it. No additional capture request was made.",
+    "A fresh application with WEBKIT_DISABLE_COMPOSITING_MODE=1 reproduced the stale visible pointer status. This setting did not resolve the failure.",
+    "Both diagnostic applications were closed normally; the retained guest remained running."
+  ],
+  "interpretation": "The resize result shows that the captured state had been established. The visible discrepancy is a repaint problem, not evidence that the pointer-lock operation failed. Its cause within the native rendering stack remains unconfirmed.",
+  "artifacts_directory": "/home/jkh/.local/share/agentos-evidence/2026-09-19-x86-ownership/gui-pointer-repaint",
+  "sha256": {
+    "agentos-pointer-status-captured.png": "b866f1fa035d5a17425c03b4f81925351623f0a8075106a44c036f7e0ce67dc3",
+    "agentos-pointer-status-resized.png": "d447671c30f24dd364cef8988865c2da14e819fff0ba7568170155e02be36dba",
+    "agentos-pointer-software-captured.png": "14f20d05d9fced41e26bb636a4b8057fccff5c47fedd0a3160e4dbfaa557becf"
+  },
+  "limits": "Diagnostic screenshots do not replace guest evdev assertions, establish a rendering fix, or qualify physical display hardware. No input or rendering code was changed."
+}
