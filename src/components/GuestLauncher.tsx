@@ -30,7 +30,7 @@ export function GuestLauncher({
   const selected = guests.find(g => g.guest_handle === selectedGuestHandle) ?? null;
   const [osType, setOsType] = useState(selected?.os_type ?? 1);
   const [arch, setArch] = useState(selected?.arch ?? 1);
-  const [ramMb, setRamMb] = useState(512);
+  const [ramDraft, setRamDraft] = useState('512');
   const [deviceFlags, setDeviceFlags] = useState(DEFAULT_FLAGS);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -64,6 +64,11 @@ export function GuestLauncher({
   }
 
   async function submit() {
+    const ramMb = Number(ramDraft);
+    if (!ramDraft.trim() || !Number.isInteger(ramMb) || ramMb < 128 || ramMb > 0xffffffff) {
+      setMessage('RAM must be a whole number between 128 and 4294967295 MiB.');
+      return;
+    }
     setBusy(true);
     setMessage(null);
     try {
@@ -162,9 +167,13 @@ export function GuestLauncher({
           <input
             type="number"
             min={128}
+            max={0xffffffff}
             step={128}
-            value={ramMb}
-            onChange={e => setRamMb(Math.max(128, Number(e.target.value)))}
+            value={ramDraft}
+            onChange={e => {
+              setRamDraft(e.target.value);
+              setMessage(null);
+            }}
             className="min-w-0 flex-1 bg-transparent text-right font-mono text-xs text-os-text
                        focus:outline-none"
           />
