@@ -7,6 +7,11 @@ pub fn run() {
     configure_webkit_renderer();
     tauri::Builder::default()
         .manage(commands::AppState::default())
+        .setup(|app| {
+            #[cfg(target_os = "linux")]
+            install_presentation_flush(app)?;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::cc_connect,
             commands::cc_disconnect,
@@ -44,6 +49,29 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(target_os = "linux")]
+fn install_presentation_flush(app: &tauri::App) -> tauri::Result<()> {
+    use gtk::prelude::*;
+    use tauri::Manager;
+
+    if let Some(window) = app.get_webview_window("main") {
+        window.with_webview(|webview| {
+            // Run after WebKit's draw handler. Cairo's shared-pixmap fallback
+            // can retain pending pixels across pointer capture; completing
+            // its surface writes here keeps native presentation advancing.
+            // Keep MIT-SHM and the system renderer enabled.
+            webview.inner().connect_local("draw", true, |values| {
+                let context = values[1]
+                    .get::<gtk::cairo::Context>()
+                    .expect("GTK draw signal supplies a Cairo context");
+                context.target().flush();
+                Some(false.to_value())
+            });
+        })?;
+    }
+    Ok(())
 }
 
 fn configure_webkit_renderer() {
