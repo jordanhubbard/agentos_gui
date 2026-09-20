@@ -167,7 +167,7 @@ export default function App() {
                   <div className="min-w-0 space-y-5">
                     {selectedGuest && <GuestDisplay key={selectedGuest.guest_handle} guest={selectedGuest} />}
                     <GuestConsole
-                      key={`console-${selectedGuest?.guest_handle ?? 'none'}`}
+                      key={`console-${selectedGuest?.guest_handle ?? 'none'}-${state.consoleGeneration}`}
                       guest={selectedGuest}
                       chunks={selectedGuest ? state.consoleChunks[selectedGuest.guest_handle] ?? [] : []}
                       onFetch={() => selectedGuest ? fetchConsole(selectedGuest) : Promise.resolve('')}

@@ -8,6 +8,11 @@ import type {
   DesktopInputEvent, InputBatchAck,
 } from '../types';
 
+export interface ConsoleChunk {
+  sequence: number;
+  text: string;
+}
+
 export interface AgentOSState {
   connected:   boolean;
   sockPath:    string;
@@ -20,7 +25,8 @@ export interface AgentOSState {
   traceStatus: TraceStatus | null;
   traceEvents: TraceEntry[];
   logLines:    string[];
-  consoleChunks: Record<number, string[]>;
+  consoleChunks: Record<number, ConsoleChunk[]>;
+  consoleGeneration: number;
   error:       string | null;
   refreshing:  boolean;
 }
@@ -39,6 +45,7 @@ export function useAgentOS() {
     traceEvents: [],
     logLines:   [],
     consoleChunks: {},
+    consoleGeneration: 0,
     error:      null,
     refreshing: false,
   });
@@ -48,6 +55,7 @@ export function useAgentOS() {
   const logFetchRef = useRef(false);
   const consoleFetchRef = useRef(false);
   const connectionEpoch = useRef(0);
+  const consoleSequence = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -205,13 +213,14 @@ export function useAgentOS() {
         slot: guest.guest_handle, pdId: 0, byHandle: guest.guest_handle !== 0,
       });
       if (epoch !== connectionEpoch.current) return '';
+      const chunk = { sequence: ++consoleSequence.current, text };
       if (text) setState(s => {
         // A response always belongs to the guest requested, even if selection
         // changed while the native socket operation was in flight.
         if (!s.connected || !s.guests.some(g => g.guest_handle === guest.guest_handle)) return s;
         const consoleChunks = Object.fromEntries(Object.entries(s.consoleChunks)
           .filter(([handle]) => s.guests.some(g => g.guest_handle === Number(handle))));
-        consoleChunks[guest.guest_handle] = [...(consoleChunks[guest.guest_handle] ?? []), text].slice(-300);
+        consoleChunks[guest.guest_handle] = [...(consoleChunks[guest.guest_handle] ?? []), chunk].slice(-300);
         return { ...s, consoleChunks };
       });
       return text;
@@ -339,7 +348,7 @@ export function useAgentOS() {
   );
 
   const clearLogs = useCallback(() =>
-    setState(s => ({ ...s, logLines: [], consoleChunks: {} })), []);
+    setState(s => ({ ...s, logLines: [], consoleChunks: {}, consoleGeneration: s.consoleGeneration + 1 })), []);
 
   function startPolling() {
     if (pollRef.current) return;
