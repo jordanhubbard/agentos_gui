@@ -113,8 +113,9 @@ test.describe('Guest list', () => {
       await page.getByRole('button', { name: 'Drain' }).click();
       const calls = await getCallsFor(page, 'cc_log_stream');
       expect(calls.length).toBeGreaterThan(0);
-      expect((calls[0].args as any).slot).toBe(0);
+      expect((calls[0].args as any).slot).toBe(1);
       expect((calls[0].args as any).pdId).toBe(0);
+      expect((calls[0].args as any).byHandle).toBe(true);
     });
 
     test('terminal key presses send raw console bytes from the selected guest terminal', async ({ page }) => {

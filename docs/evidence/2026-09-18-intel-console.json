@@ -1,0 +1,46 @@
+{
+  "schema": "agentos_gui.managed_intel_console.v1",
+  "gui_revision": "e883e077ec3890b9ddfc5d8fc58f742054ace9d1",
+  "gui_binary_sha256": "8fa7150a46d7ac7cb6c1042401126d893b87409e25fd703f891805257d0469fd",
+  "os_revision": "3fcdf58eddecc37337d96e448ab652793b11bf12",
+  "os_root_task_sha256": "7d0471454662b051e5188506e31c488063987c82cd737eb635081d59989151b1",
+  "gui_host": "sparky Linux aarch64, native Tauri release binary, isolated Xvfb display",
+  "target_host": "madmax Intel Linux with nested KVM, reached through puck.local",
+  "os_command": "make run-x86_64-cc-linux SEL4_SDK_VERSION=2.3.0 X86_ROOT_DISK=/tmp/agentos-debian-amd64/boot-24.raw X86_SSH_PORT=12224 X86_FIRMWARE_IMAGE=/tmp/agentos-ovmf-2024.02-2ubuntu0.9.fd X86_FIRMWARE_SHA256=101afad5f520753224b60b9555df60add435cf50c7a82b781d7d7d8c60db7eb5",
+  "gui_command": "DISPLAY=:0 LIBGL_ALWAYS_SOFTWARE=1 WEBKIT_DISABLE_DMABUF_RENDERER=1 make run CC_PD_SOCK=/tmp/agentos-gui-intel-20260918.sock",
+  "transport": "Two SSH Unix-socket forwards carry unchanged binary CC frames from Spark through puck to Intel; no HTTP or WebSocket service",
+  "result": "passed for one managed Intel Linux guest",
+  "observations": [
+    "GUI connected to the empty guest inventory and created x86_64 Linux handle 1 with its Start button",
+    "The native xterm console displayed Debian 13 startup and the agentos-debian login prompt",
+    "X11 keyboard events typed agentos-gui-native-echo into the native terminal; the identical guest-echoed text appeared",
+    "Suspend changed the GUI state to Suspended; Resume changed it to Running",
+    "A fresh GUIRESUMED keyboard input was echoed after resume, proving continued guest console execution",
+    "Destroy returned the GUI to No guest OS instances running"
+  ],
+  "screenshots_on_sparky": {
+    "/tmp/agentos-gui-managed-running.png": "4acf4500b3266dd17c556e7830a955160b8ba1b9bd90c07cda0c3100d316f10a",
+    "/tmp/agentos-gui-managed-input-echo.png": "c579ea83ad489453180a134962898d7bde8c0a550c93e8ebee63f1dfae4a3a0b",
+    "/tmp/agentos-gui-managed-suspended.png": "9f76498c100b68c47d41028aa0aa7f552f4c60f261f9e8bf94efd7336d328565",
+    "/tmp/agentos-gui-managed-resumed.png": "55ae375421a1b1c92ccfa47947390cbd7d0051c36871d7c0902503fa5d8ce6ea",
+    "/tmp/agentos-gui-managed-resume-echo-retry.png": "6be503c364f9b6478feaae807d1541a7344e22da351c516fb8ff271056c70860",
+    "/tmp/agentos-gui-managed-destroyed.png": "425a30ef162249fab9ddcf30a483c74a1c42e51bc9b575530328bf7f98046599"
+  },
+  "logs_on_sparky": {
+    "/tmp/agentos-x86-cc-gui-handle-launch.log": "c35f5a3e380da577796d1677d8b17ecb19f1b55106e1a8f992bc7152ad2c493d",
+    "/tmp/agentos-cc-handle-mode-gate.log": "6b32b8bbe1d0d6946e1e9e3ba195c2f08cbaa5b3f2c88f15cfc6f70e7cd07597",
+    "/tmp/agentos-gui-console-mode-tests.log": "30a9b52ea652dab34dafc0d8466ac1e9c547da6bf7f4ede6a2cdaf9d3104a4d6",
+    "/tmp/agentos-gui-console-check-rust.log": "7ab5f249fa7960f59e79f76ee66be18917721569be556854ea7097fde25a9da9",
+    "/tmp/agentos-gui-managed-build.log": "a80a39db56a408bec6f7de058bf09bec28442250ffa69dd26acb9ec309bf75d7"
+  },
+  "checks": "make check, 121 browser tests, 12 Rust bridge tests, native make build, and full agentOS make gate on Spark passed",
+  "retained_target_artifacts": "build/evidence/x86-cc-gui-3fcdf58 on Intel host includes root_task.elf and QEMU capture files; interactive root output is in the Spark launch log",
+  "cleanup": "Guest destroyed; GUI, QEMU, both SSH forwarding processes and the owned Xvfb server explicitly stopped; sockets removed",
+  "limitations": [
+    "Single-guest native qualification; switching with delayed replies is browser-mock evidence, not concurrent native guest isolation",
+    "Serial terminal echo is not graphical keyboard/pointer delivery or a guest framebuffer proof",
+    "A separate 300-chunk transcript rollover defect remains tracked by task_8242bb53482b4301be5e1933b5e83732",
+    "Legacy topology labels are not authoritative evidence of live PD wiring",
+    "No guest recreation, abrupt disconnect recovery, desktop resource admission, concurrent disk isolation or v0.4 release acceptance"
+  ]
+}

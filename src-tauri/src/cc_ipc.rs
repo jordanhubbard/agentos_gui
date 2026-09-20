@@ -524,6 +524,20 @@ impl CcClient {
         Ok(s)
     }
 
+    /// Explicit public-handle addressing; mode zero is the legacy log-slot API.
+    pub fn guest_console(&mut self, handle: u32) -> io::Result<String> {
+        const CC_LOG_ADDRESS_HANDLE: u32 = 1;
+        let reply = self.send_recv(MSG_CC_LOG_STREAM, handle, 0, CC_LOG_ADDRESS_HANDLE, &[])?;
+        let status = u32::from_le_bytes(reply[0..4].try_into().unwrap());
+        let length = u32::from_le_bytes(reply[4..8].try_into().unwrap()) as usize;
+        let echoed = u32::from_le_bytes(reply[8..12].try_into().unwrap());
+        if status != 0 || length > CC_SHMEM_SIZE || echoed != handle {
+            return Err(io::Error::new(io::ErrorKind::InvalidData,
+                format!("guest console handle {handle}: status={status}, length={length}, echoed={echoed}")));
+        }
+        Ok(String::from_utf8_lossy(&reply[16..16 + length]).into_owned())
+    }
+
     pub fn device_status(
         &mut self,
         dev_type: u32,
@@ -804,7 +818,8 @@ impl CcClient {
         }
 
         let has_ok_mr = opcode_has_ok_mr(opcode);
-        let ok = error.is_none() && (!has_ok_mr || reply_mr[0] == 0)
+        let ok = error.is_none()
+            && (!has_ok_mr || reply_mr[0] == 0)
             && (!matches!(opcode, MSG_CC_INPUT_SUBMIT | MSG_CC_FRAME_CAPTURE) || reply_mr[2] == 0);
 
         self.traffic.push_back(TrafficEvent {
@@ -923,4 +938,49 @@ fn now_ms() -> u64 {
 
 fn millis_since(start: Instant) -> u64 {
     start.elapsed().as_millis().min(u64::MAX as u128) as u64
+}
+
+#[cfg(test)]
+mod console_tests {
+    use super::*;
+
+    #[test]
+    fn public_handle_console_validates_wire_status_length_and_identity() {
+        for (status, length, echoed, valid) in [
+            (0u32, 3u32, 17u32, true),
+            (6, 0, 17, false),
+            (0, 4097, 17, false),
+            (0, 3, 18, false),
+        ] {
+            let (stream, mut peer) = UnixStream::pair().unwrap();
+            let mut client = CcClient {
+                stream,
+                session_id: 0,
+                traffic: VecDeque::new(),
+                next_traffic_seq: 0,
+                frame: None,
+            };
+            let server = std::thread::spawn(move || {
+                let mut request = [0u8; CC_REQ_SIZE];
+                peer.read_exact(&mut request).unwrap();
+                let mut expected = [0u8; CC_REQ_SIZE];
+                for (i, word) in [MSG_CC_LOG_STREAM, 17, 0, 1].iter().enumerate() {
+                    expected[i * 4..i * 4 + 4].copy_from_slice(&word.to_le_bytes());
+                }
+                assert_eq!(request, expected);
+                let mut reply = [0u8; CC_REPLY_SIZE];
+                for (i, word) in [status, length, echoed, 0].iter().enumerate() {
+                    reply[i * 4..i * 4 + 4].copy_from_slice(&word.to_le_bytes());
+                }
+                reply[16..19].copy_from_slice(b"abc");
+                peer.write_all(&reply).unwrap();
+            });
+            let result = client.guest_console(17);
+            assert_eq!(result.is_ok(), valid);
+            if valid {
+                assert_eq!(result.unwrap(), "abc");
+            }
+            server.join().unwrap();
+        }
+    }
 }
