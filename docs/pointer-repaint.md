@@ -22,12 +22,26 @@ The diagnostic also prints the GTK frame-clock counter. In the failing run
 both that counter and the JavaScript animation counter continued advancing
 after pointer capture. A stopped GTK frame clock therefore does not explain
 this reproduction; the visible pixels still remained stale.
+The `draws` counter also keeps increasing, so GTK draw callbacks themselves
+are not stopped.
+
+Set `AGENTOS_REPRO_SNAPSHOT=/tmp/pointer-content.png` to save one WebKit content
+snapshot after the first successful capture. The snapshot callback must print
+`snapshot_status=0`. In the observed failure, that PNG correctly says
+`captured` and shows a newer frame counter, while both a root-window screenshot
+and a direct native-window screenshot retain the old `outside` frame.
+This narrows the discrepancy to native presentation rather than document
+state or WebKit's snapshot rendering. Taking the snapshot does not repair the
+visible window.
 
 The reproduction also accepts `AGENTOS_REPRO_SOFTWARE=1` to select WebKit's
 NEVER hardware-acceleration policy and `AGENTOS_REPRO_REDRAW=1` to request a
 GTK redraw on each diagnostic message. Neither resolved the observed failure.
 The production application's `WEBKIT_DISABLE_COMPOSITING_MODE=1` experiment
 also failed. These are diagnostic switches, not recommended workarounds.
+Enabling DMA-BUF explicitly with `WEBKIT_DISABLE_DMABUF_RENDERER=0` and a
+separate local variant omitting the canvas focus call also reproduced the
+failure; neither is a fix.
 
 Evidence is retained in
 `/home/jkh/.local/share/agentos-evidence/2026-09-19-x86-ownership/gui-pointer-repaint`.

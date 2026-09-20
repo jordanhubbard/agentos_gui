@@ -101,6 +101,7 @@ help:
 	@echo "  make check            Type-check frontend"
 	@echo "  make test             Run Playwright tests"
 	@echo "  make test-rust        Test the native binary protocol bridge"
+	@echo "  make diagnose-pointer-repaint  Run standalone GTK/WebKit pointer reproduction"
 	@echo "  make benchmark-frame Measure CC status/frame latency (close GUI first)"
 	@echo "  make clean            Remove frontend/Tauri build artifacts"
 	@echo ""
