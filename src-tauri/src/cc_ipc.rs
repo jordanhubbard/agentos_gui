@@ -66,6 +66,32 @@ pub const CC_CONNECTION_VERSION: u32 = 1;
 pub const CC_OK: u32 = 0;
 pub const CC_OPERATOR_TOKEN_BYTES: usize = 32;
 
+/// `cc_pd`'s status code for a deliberate operator-authority-envelope
+/// refusal (as opposed to a transport fault or an unrelated protocol
+/// error). The envelope is defined and enforced entirely by the running
+/// `cc_pd`; this constant only lets us recognize its refusal and surface it
+/// distinctly instead of flattening it into a generic error.
+pub const CC_ERR_NOT_PERMITTED: u32 = 11;
+
+/// Build an `io::Error` for a non-OK `cc_pd` status reply.
+///
+/// A `CC_ERR_NOT_PERMITTED` refusal is reported with
+/// `io::ErrorKind::PermissionDenied` so callers (see `commands.rs`) can
+/// mechanically distinguish "cc_pd's operator authority envelope refused
+/// this on purpose" from any other failure, without parsing message text.
+/// Every other non-OK status keeps the existing generic `ErrorKind::Other`
+/// shape.
+fn status_err(context: &str, ok: u32) -> io::Error {
+    if ok == CC_ERR_NOT_PERMITTED {
+        io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("{context} refused by the operator authority envelope (CC_ERR_NOT_PERMITTED)"),
+        )
+    } else {
+        io::Error::new(io::ErrorKind::Other, format!("{context} err {ok}"))
+    }
+}
+
 // ── Device type constants (CC_DEV_TYPE_*) ────────────────────────────────────
 pub const CC_DEV_TYPE_SERIAL: u32 = 0;
 pub const CC_DEV_TYPE_NET: u32 = 1;
@@ -620,10 +646,7 @@ impl CcClient {
         let reply = self.send_recv(MSG_CC_SNAPSHOT, handle, 0, 0, &[])?;
         let ok = u32::from_le_bytes(reply[0..4].try_into().unwrap());
         if ok != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("snapshot err {ok}"),
-            ));
+            return Err(status_err("snapshot", ok));
         }
         Ok(SnapResult {
             snap_lo: u32::from_le_bytes(reply[4..8].try_into().unwrap()),
@@ -635,10 +658,7 @@ impl CcClient {
         let reply = self.send_recv(MSG_CC_RESTORE, handle, snap_lo, snap_hi, &[])?;
         let ok = u32::from_le_bytes(reply[0..4].try_into().unwrap());
         if ok != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("restore err {ok}"),
-            ));
+            return Err(status_err("restore", ok));
         }
         Ok(())
     }
@@ -776,10 +796,7 @@ impl CcClient {
         let reply = self.send_recv(MSG_CC_FAULT_INJECT, slot_id, fault_kind, flags, &[])?;
         let ok = u32::from_le_bytes(reply[0..4].try_into().unwrap());
         if ok != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("fault_inject err {ok}"),
-            ));
+            return Err(status_err("fault_inject", ok));
         }
         Ok(FaultInjectResult {
             result: u32::from_le_bytes(reply[4..8].try_into().unwrap()),
@@ -792,10 +809,7 @@ impl CcClient {
         let reply = self.send_recv(MSG_CC_TRACE_START, flags, 0, 0, &[])?;
         let ok = u32::from_le_bytes(reply[0..4].try_into().unwrap());
         if ok != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("trace_start err {ok}"),
-            ));
+            return Err(status_err("trace_start", ok));
         }
         Ok(TraceStatus {
             ok,
@@ -809,10 +823,7 @@ impl CcClient {
         let reply = self.send_recv(MSG_CC_TRACE_STOP, 0, 0, 0, &[])?;
         let ok = u32::from_le_bytes(reply[0..4].try_into().unwrap());
         if ok != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("trace_stop err {ok}"),
-            ));
+            return Err(status_err("trace_stop", ok));
         }
         Ok(TraceStatus {
             ok,
@@ -826,10 +837,7 @@ impl CcClient {
         let reply = self.send_recv(MSG_CC_TRACE_QUERY, 0, 0, 0, &[])?;
         let ok = u32::from_le_bytes(reply[0..4].try_into().unwrap());
         if ok != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("trace_query err {ok}"),
-            ));
+            return Err(status_err("trace_query", ok));
         }
         Ok(TraceStatus {
             ok,
@@ -843,10 +851,7 @@ impl CcClient {
         let reply = self.send_recv(MSG_CC_TRACE_DUMP, max_events, 0, 0, &[])?;
         let ok = u32::from_le_bytes(reply[0..4].try_into().unwrap());
         if ok != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("trace_dump err {ok}"),
-            ));
+            return Err(status_err("trace_dump", ok));
         }
         let events_written = u32::from_le_bytes(reply[4..8].try_into().unwrap());
         let bytes_written = u32::from_le_bytes(reply[8..12].try_into().unwrap());

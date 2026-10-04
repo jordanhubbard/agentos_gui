@@ -25,6 +25,7 @@
     "allow-cc-send-input",
     "allow-cc-get-sock-path",
     "allow-cc-should-autoconnect",
+    "allow-cc-allowed-sock-paths",
     "allow-cc-device-status",
     "allow-cc-attach-framebuffer",
     "allow-cc-fault-inject",

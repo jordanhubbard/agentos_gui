@@ -6,6 +6,7 @@ export const DEFAULT_MOCKS: Record<string, unknown> = {
   cc_disconnect:         null,
   cc_is_connected:       true,
   cc_get_sock_path:      'build/cc_pd.sock',
+  cc_allowed_sock_paths: ['build/cc_pd.sock'],
   cc_should_autoconnect: false,
   cc_list_sessions: [
     { session_id: 0, state: 0, client_badge: 0xa6e70002, ticks_since_active: 0 },

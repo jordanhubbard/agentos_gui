@@ -306,3 +306,250 @@ test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
    needs, e.g., window-close-confirmation via `@tauri-apps/api/window`, it
    will need an explicit `core:window:allow-*` permission added; it won't
    "just work" anymore the way it silently did under `core:default`.
+
+---
+
+# Fix round 1 (post-review)
+
+Review verdict: Spec COMPLIANT but NOT APPROVED — one Critical, one Important,
+two Minor, plus a "verify and report" item on xterm/CSP. All addressed below.
+`npm run check`, the full Playwright suite, `cargo test`, and a release build
+all pass — real output at the end of this section.
+
+## CRITICAL: a correctly-hardened cc_pd bricked the dashboard
+
+**Root cause.** agentOS's T1 work added an operator authority envelope to
+`cc_pd` that deliberately refuses snapshot, restore, fault-injection and
+trace with `CC_ERR_NOT_PERMITTED` (snapshot reads guest RAM in full and is
+an exfiltration primitive; fault injection is an attack tool; trace is debug
+surface). `useAgentOS.ts`'s `refresh()` had `cc_trace_query`/`cc_trace_dump`
+inside the same `Promise.all` as guests/devices/polecats/sessions/traffic.
+`Promise.all` rejects wholesale on the first rejection, so the moment a
+correctly-hardened `cc_pd` refused trace, **every** refresh cycle failed,
+permanently, behind one generic header error — guests, devices, polecats,
+sessions and traffic all stopped updating. The app looked broken; the actual
+cause was a security policy on the other side of the socket that this client
+had no way to distinguish from a transport fault.
+
+**Fix, two parts, both implemented:**
+
+1. **`src/hooks/useAgentOS.ts`** — `cc_trace_query` and `cc_trace_dump` are
+   now fetched in their own `Promise.all`, separate from the main one, with
+   `.catch()` on each (same pattern already used for the traffic re-fetch in
+   `fetchLogs()`). A refused trace call can no longer take the rest of a
+   refresh cycle down with it. New state field `traceNotPermitted: string |
+   null` carries the reason when cc_pd refuses it.
+
+2. **Typed `NotPermitted` distinction, end to end:**
+   - `src-tauri/src/cc_ipc.rs`: added `pub const CC_ERR_NOT_PERMITTED: u32 =
+     11` and a `status_err(context, ok)` helper used by `snapshot`,
+     `restore`, `fault_inject`, `trace_start`, `trace_stop`, `trace_query`,
+     and `trace_dump` (the exact four categories the envelope restricts).
+     It reports a `CC_ERR_NOT_PERMITTED` reply with
+     `io::ErrorKind::PermissionDenied` — a real, typed distinction, not a
+     string convention — so callers can tell "cc_pd refused this on
+     purpose" apart from `io::ErrorKind::Other` for every other non-OK
+     status, without parsing message text.
+   - `src-tauri/src/commands.rs`: added `map_cc_error(e: io::Error) ->
+     String`, used by the seven corresponding Tauri commands. It checks
+     `e.kind() == PermissionDenied` and prefixes the string crossing the IPC
+     boundary with `NOT_PERMITTED: ` so the frontend can detect it
+     mechanically (Tauri commands only carry `String` errors across IPC, so
+     this is the boundary where the Rust-typed distinction has to become a
+     frontend-detectable signal).
+   - `src/lib/ccErrors.ts` (new): `notPermittedReason(error)` strips that
+     prefix and returns the reason, or `null` if the error wasn't a refusal.
+     Shared by `useAgentOS.ts`, `GuestCard.tsx`, and `ApiPanel.tsx` so the
+     detection logic lives in exactly one place.
+
+**Per the instruction not to hide the affected controls** (hiding would
+hardcode a policy this client cannot observe — the envelope is defined by
+the running `cc_pd`, not by the GUI): on a `NotPermitted` response the
+specific control is **disabled** with a visible, persistent message naming
+the reason, rather than removed:
+- `GuestCard.tsx`: Snapshot/Restore buttons disable individually and show
+  "refused by the operator authority envelope: …" (amber, with a
+  `ShieldOff` icon) the first time cc_pd refuses either.
+- `ApiPanel.tsx`: Inject, and the four TraceRecorder buttons (Start / Stop /
+  Query / Dump), do the same — fault-inject and trace are Important
+  (user-initiated, fail in isolation) per the review, handled with the
+  identical mapping as the Critical trace-in-refresh path.
+
+## IMPORTANT: ConnectDialog invited input it would always refuse
+
+`cc_connect` (hardened in the original round) only accepts a
+backend-resolved path, but `ConnectDialog.tsx` still offered a free-text
+field plus a typed-path history the backend now rejects outright — teaching
+operators the app is broken. Fixed:
+
+- Added `cc_allowed_sock_paths` (`src-tauri/src/commands.rs`, registered in
+  `lib.rs`/`build.rs`/`capabilities/default.json` the same way as every
+  other command in this project): returns the backend's currently active
+  default first, followed by every other path `allowed_sock_paths()` would
+  accept, deduplicated.
+- `ConnectDialog.tsx` redesigned: the socket-path field is now `readOnly`
+  and always shows a backend-resolved path — nothing the operator types is
+  ever sent. When the backend reports more than one legitimate candidate, a
+  "Known locations" `<select>` lets the operator pick among them (replacing
+  the old free-text + `localStorage` history). Help text documents the
+  supported override: "relaunch with `CC_PD_SOCK=/path/to/cc_pd.sock`" —
+  this was already the documented mechanism in `README.md`/`AGENTS.md`, just
+  not mentioned in the dialog itself.
+- `useAgentOS.ts` fetches `cc_allowed_sock_paths` alongside
+  `cc_get_sock_path` on mount and exposes it as `state.sockPathOptions`.
+
+This is a real, intentional UX change: an operator who was relying on typing
+an arbitrary custom path into the dialog must now relaunch with `CC_PD_SOCK`
+instead. That trade-off was flagged in the original report and is exactly
+what this fix follows through on.
+
+**Test impact:** `tests/connect.spec.ts` and `tests/recent_paths.spec.ts`
+tested the old free-text/history behavior directly (typing arbitrary paths,
+`localStorage` persistence) — behavior that no longer exists by design.
+Per the review, I did not delete or weaken coverage; I rewrote both files to
+test the replacement feature at equal or greater depth: default display,
+read-only enforcement, picker population from `cc_allowed_sock_paths`,
+default preselection, picking an alternate and connecting with it, the
+CC_PD_SOCK documentation text, Enter-to-connect, and the existing
+error-handling paths — all unchanged in spirit, now exercised against the
+picker instead of a text field. `tests/helpers/app.ts`'s `connectApp()` was
+updated to select from the picker when a non-default path is requested
+instead of filling text.
+
+## MINOR: flaky env-var tests
+
+`src-tauri/src/commands.rs`'s `sock_path_tests` module: added a
+module-level `static ENV_LOCK: std::sync::Mutex<()>`, held for the duration
+of every test that sets/removes `CC_PD_SOCK` or calls `validate_sock_path`
+(which reads it indirectly via `allowed_sock_paths()`). Rust's default test
+harness runs tests in parallel threads within one process and
+`std::env::set_var`/`remove_var` are process-wide, so without this, two
+tests touching `CC_PD_SOCK` concurrently could interleave. Verified stable
+across three consecutive `cargo test` runs.
+
+## MINOR: `./build/cc_pd.sock` vs `build/cc_pd.sock`
+
+Added `normalize_path_str()` (`src-tauri/src/commands.rs`) — a purely
+lexical normalization (collapses `.` and resolves `..` against a preceding
+component) used before every path comparison in `validate_sock_path()` and
+the new `cc_allowed_sock_paths` dedup. Deliberately **not**
+`std::fs::canonicalize`: the whole point of `allowed_sock_paths()` is to
+list sockets agentOS *might* create, and `canonicalize` fails outright on a
+path that doesn't exist yet (e.g. before `cc_pd` has started). Added a test,
+`accepts_a_dot_slash_prefixed_variant_of_the_default`, confirming
+`./build/cc_pd.sock` now validates against a `build/cc_pd.sock` default.
+
+## xterm.js vs the CSP — verified, and it was a real casualty
+
+I built the real release bundle and additionally wrote a throwaway
+Playwright script (not part of the suite — deleted after use) that served
+the built `dist/` via `vite preview`, injected the exact CSP as a `<meta>`
+tag (reproducing what Tauri does on Linux; Tauri delivers it as a response
+header on macOS/Windows, which is strictly stricter, not looser), mocked
+`window.__TAURI_INTERNALS__`, connected, and opened the guest console
+(which mounts `@xterm/xterm`), capturing all `console.error` output.
+
+**Result: xterm.js was a real, reproducible casualty.** It calls
+`document.createElement("style")` internally (confirmed in
+`node_modules/@xterm/xterm/lib/xterm.js`: `this._dimensionsStyle` and
+`this._themeStyle`, both `<style>` elements appended to the DOM at runtime
+for character-cell measurement and ANSI theme colors) — this is governed by
+CSP's `style-src`/`style-src-elem`, not the `style=""` attribute path, and
+is unrelated to React's `style={{...}}` prop usage elsewhere in this app
+(`AgentPool.tsx`, `TopologyGraph.tsx`), which sets DOM style properties
+directly and, confirmed by the same test, triggers **no** CSP violation.
+Under the original `style-src 'self' https://fonts.googleapis.com` (no
+`unsafe-inline`), the browser logged three `Applying inline style
+violates... style-src` errors per console mount and the terminal's
+dimension/theme styling never applied.
+
+**Fix:** added `style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com`
+as an additional, narrower directive alongside the existing `style-src`
+(which still has no `unsafe-inline` and governs the `style=""` attribute
+path). Per CSP's directive-precedence rules, `style-src-elem` — when
+present — governs `<style>`/`<link rel=stylesheet>` elements specifically
+and `style-src` no longer applies to them; `style-src` still fully applies
+to the attribute path. I deliberately avoided the alternative of just adding
+`unsafe-inline` to the base `style-src` (which would have been silent and
+would have reopened the attribute path too, per the instruction not to do
+that). Re-ran the same test after the change: zero CSP violations, terminal
+style elements applied.
+
+**What this exception actually costs:** a malicious script with any reach
+into this webview could now inject its own `<style>` element (e.g. for a
+UI-redress/phishing overlay). It cannot inject or execute script
+(`script-src 'self'`, untouched), cannot reach a new network origin
+(`connect-src`/`default-src`, untouched), and cannot set the `style=""`
+attribute directly without `unsafe-inline` on `style-src` itself, which I
+did not add. This is a real, narrow relaxation, not a no-op — I'm not
+characterizing it as closing nothing, the way the task warns against for
+the whole-CSP case — but it is a materially smaller exception than relaxing
+`style-src` generally.
+
+**Caveat I could not fully close:** `style-src-elem` is a CSP Level 3
+directive. It's supported in Chromium (used for my verification) and
+Firefox; WebKit/Safari support landed in Safari 15.4 (macOS 12.3,
+March 2022). Tauri's macOS target is WKWebView, so on an OS older than that
+the browser would presumably fall back to the base `style-src` (without
+`unsafe-inline`) for `<style>` elements too, per the CSP spec's directive-
+fallback behavior, and xterm's dynamic styles would be blocked again on
+that specific old-OS case. I was not able to verify WebKit's exact fallback
+behavior directly in this sandbox (no older macOS/Safari available). This
+is a real residual gap and I'm reporting it rather than asserting it's
+fully resolved on every platform.
+
+## Verification — real output
+
+### `npm run check`
+```
+> agentos-gui@0.1.0 check
+> tsc --noEmit
+```
+(clean)
+
+### `cargo test` (run three times to confirm no flake from the env-var fix)
+```
+running 10 tests
+test cc_ipc::tests::malformed_credential_hex_is_rejected_not_silently_defaulted ... ok
+test cc_ipc::tests::dev_credential_is_well_formed ... ok
+test cc_ipc::tests::sync_frame_tracks_generation_changes_across_reconnects ... ok
+test cc_ipc::tests::credential_hex_round_trips ... ok
+test commands::sock_path_tests::accepts_the_cc_pd_sock_env_override ... ok
+test commands::sock_path_tests::accepts_a_dot_slash_prefixed_variant_of_the_default ... ok
+test cc_ipc::tests::sync_frame_echoes_greeting_and_carries_credential ... ok
+test commands::sock_path_tests::accepts_the_current_resolved_default ... ok
+test commands::sock_path_tests::rejects_an_arbitrary_unix_socket_path ... ok
+test commands::sock_path_tests::rejects_an_empty_path ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+Stable across 3 consecutive runs.
+
+### `npm test` (Playwright — 100 tests; 7 new vs. the previous round: 2 refused-control
+tests in `guests.spec.ts`, 2 in `api.spec.ts`, 1 refresh-resilience test, plus
+net new coverage in the rewritten `connect.spec.ts`/`recent_paths.spec.ts`)
+```
+Running 100 tests using 5 workers
+...
+100 passed (11.3s)
+```
+
+### Build
+- `npm run build` (full release + bundle): succeeded, produced
+  `agentOS GUI.app` and `agentOS GUI_0.1.0_aarch64.dmg` with the updated CSP
+  baked in.
+- Launched the real built app headlessly (`AGENTOS_GUI_AUTOCONNECT=0`) and
+  checked `log show --predicate 'process == "agentos-gui"'`: page load
+  completed (`firstMeaningfulPaint=0.126`, `subresourcesFinished=0.088`),
+  zero CSP-violation log lines, process stayed resident until killed. Same
+  caveat as the original report: no interactive display in this sandbox, so
+  this is not a substitute for a manual click-through.
+
+## Remaining concerns
+
+- The WebKit/`style-src-elem` fallback gap above (old macOS/Safari).
+- Google Fonts remains a named CSP exception and a first-paint network
+  dependency — recorded as a non-blocking follow-up per the review, not
+  fixed in this round.
+- `cc_is_connected` is still registered but ungranted/unused, as in the
+  original round — unchanged, not in scope for this round.

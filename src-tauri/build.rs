@@ -28,6 +28,7 @@ fn main() {
             "cc_send_input",
             "cc_get_sock_path",
             "cc_should_autoconnect",
+            "cc_allowed_sock_paths",
             "cc_device_status",
             "cc_attach_framebuffer",
             "cc_fault_inject",

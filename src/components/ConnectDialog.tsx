@@ -1,45 +1,32 @@
 import { useEffect, useState } from 'react';
 import { PlugZap } from 'lucide-react';
 
-const SOCK_PATH_KEY    = 'cc_sock_path';
-const SOCK_HISTORY_KEY = 'cc_sock_history';
-const MAX_HISTORY      = 5;
-const FALLBACK_SOCK_PATH = 'build/cc_pd.sock';
-
-function loadHistory(): string[] {
-  try { return JSON.parse(localStorage.getItem(SOCK_HISTORY_KEY) ?? '[]'); }
-  catch { return []; }
-}
-
-function saveHistory(path: string) {
-  const h = [path, ...loadHistory().filter(p => p !== path)].slice(0, MAX_HISTORY);
-  localStorage.setItem(SOCK_HISTORY_KEY, JSON.stringify(h));
-  localStorage.setItem(SOCK_PATH_KEY, path);
-}
-
 interface Props {
   defaultPath: string;
+  // Every socket path the backend will actually accept (see
+  // cc_allowed_sock_paths / allowed_sock_paths() in src-tauri/src/
+  // commands.rs), with the currently resolved default first. The backend
+  // rejects anything else, so this dialog only ever offers paths drawn from
+  // this list rather than free text it would have to reject.
+  sockPathOptions: string[];
   onConnect: (path: string) => void;
   error:     string | null;
 }
 
-export function ConnectDialog({ defaultPath, onConnect, error }: Props) {
-  const [path, setPath] = useState(
-    () => localStorage.getItem(SOCK_PATH_KEY) ?? defaultPath,
-  );
-  const [history] = useState<string[]>(loadHistory);
+export function ConnectDialog({ defaultPath, sockPathOptions, onConnect, error }: Props) {
+  const options = sockPathOptions.length > 0 ? sockPathOptions : [defaultPath];
+  const [selected, setSelected] = useState(defaultPath || options[0]);
 
+  // The backend resolves its default once at startup and reports it (and
+  // every other candidate) asynchronously after mount — pick it up once it
+  // arrives instead of sticking with the initial placeholder value.
   useEffect(() => {
-    const storedPath = localStorage.getItem(SOCK_PATH_KEY);
-    if (defaultPath && (!storedPath || defaultPath !== FALLBACK_SOCK_PATH)) {
-      setPath(defaultPath);
-    }
+    if (defaultPath) setSelected(defaultPath);
   }, [defaultPath]);
 
   function handleConnect() {
-    const trimmed = path.trim();
+    const trimmed = selected.trim();
     if (!trimmed) return;
-    saveHistory(trimmed);
     onConnect(trimmed);
   }
 
@@ -57,38 +44,43 @@ export function ConnectDialog({ defaultPath, onConnect, error }: Props) {
           </h1>
         </div>
 
-        <label className="mb-1 block text-xs font-medium uppercase text-os-muted">
+        <label htmlFor="cc-sock-path" className="mb-1 block text-xs font-medium uppercase text-os-muted">
           Socket path
         </label>
         <input
-          className="mb-2 w-full rounded-lg border border-os-border bg-os-bg px-3 py-2
-                     font-mono text-sm text-os-text placeholder:text-os-muted
-                     focus:border-os-accent focus:outline-none"
-          value={path}
-          onChange={e => setPath(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && handleConnect()}
-          placeholder="build/cc_pd.sock"
+          id="cc-sock-path"
+          className="mb-2 w-full cursor-not-allowed rounded-lg border border-os-border bg-os-bg px-3 py-2
+                     font-mono text-sm text-os-muted"
+          value={selected}
+          readOnly
           spellCheck={false}
-          autoFocus
+          onKeyDown={e => e.key === 'Enter' && handleConnect()}
         />
 
-        {/* Recent paths */}
-        {history.length > 0 && (
-          <div className="mb-4 flex flex-wrap gap-1.5">
-            {history.map(p => (
-              <button
-                key={p}
-                onClick={() => setPath(p)}
-                className={`rounded border px-2 py-0.5 font-mono text-xs transition
-                            ${p === path
-                              ? 'border-os-accent/50 text-os-accent'
-                              : 'border-os-border text-os-muted hover:border-os-accent/40 hover:text-os-text'}`}
-              >
-                {p.split('/').pop()}
-              </button>
-            ))}
+        {options.length > 1 && (
+          <div className="mb-2">
+            <label htmlFor="cc-sock-path-picker" className="mb-1 block text-xs font-medium uppercase text-os-muted">
+              Known locations
+            </label>
+            <select
+              id="cc-sock-path-picker"
+              value={selected}
+              onChange={e => setSelected(e.target.value)}
+              className="w-full rounded-lg border border-os-border bg-os-bg px-3 py-2
+                         font-mono text-sm text-os-text focus:border-os-accent focus:outline-none"
+            >
+              {options.map(p => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
           </div>
         )}
+
+        <p className="mb-4 font-mono text-[11px] leading-relaxed text-os-muted">
+          This client only connects to an agentOS-resolved socket location — it cannot
+          be pointed at an arbitrary path. To use a different one, relaunch with{' '}
+          <code className="text-os-text">CC_PD_SOCK=/path/to/cc_pd.sock</code>.
+        </p>
 
         {error && (
           <p className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2
@@ -99,6 +91,7 @@ export function ConnectDialog({ defaultPath, onConnect, error }: Props) {
 
         <button
           onClick={handleConnect}
+          autoFocus
           className="flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-os-accent px-4
                      font-mono text-sm font-semibold text-slate-950 transition hover:bg-os-accent/80
                      active:scale-[0.98]"

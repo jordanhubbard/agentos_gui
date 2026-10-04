@@ -29,6 +29,7 @@ pub fn run() {
             commands::cc_send_input,
             commands::cc_get_sock_path,
             commands::cc_should_autoconnect,
+            commands::cc_allowed_sock_paths,
             commands::cc_device_status,
             commands::cc_attach_framebuffer,
             commands::cc_fault_inject,

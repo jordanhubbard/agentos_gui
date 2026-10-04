@@ -204,4 +204,40 @@ test.describe('Snapshot / restore flow', () => {
     await page.getByRole('button', { name: 'Snapshot' }).first().click();
     await expect(page.getByText(/error: snapshot failed/)).toBeVisible();
   });
+
+  test('snapshot refused by the operator authority envelope disables the control with a reason', async ({ page }) => {
+    await setupTauriMock(page, {
+      cc_snapshot: mockError(
+        'NOT_PERMITTED: snapshot refused by the operator authority envelope (CC_ERR_NOT_PERMITTED)',
+      ),
+    });
+    await page.reload();
+    await connectApp(page);
+    await expect(page.getByText('Linux')).toBeVisible();
+
+    const card = page.locator('.rounded-lg').filter({ hasText: 'Linux' });
+    await card.getByRole('button', { name: 'Snapshot' }).click();
+
+    await expect(page.getByText(/refused by the operator authority envelope/)).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Snapshot' })).toBeDisabled();
+  });
+
+  test('restore refused by the operator authority envelope disables the control with a reason', async ({ page }) => {
+    await setupTauriMock(page, {
+      cc_restore: mockError(
+        'NOT_PERMITTED: restore refused by the operator authority envelope (CC_ERR_NOT_PERMITTED)',
+      ),
+    });
+    await page.reload();
+    await connectApp(page);
+    await expect(page.getByText('Linux')).toBeVisible();
+
+    const card = page.locator('.rounded-lg').filter({ hasText: 'Linux' });
+    await card.getByRole('button', { name: 'Snapshot' }).click();
+    await expect(card.getByText(/snapshot 0x/)).toBeVisible();
+    await card.getByRole('button', { name: 'Restore' }).click();
+
+    await expect(page.getByText(/refused by the operator authority envelope/)).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Restore' })).toBeDisabled();
+  });
 });

@@ -57,6 +57,7 @@ export default function App() {
     return (
       <ConnectDialog
         defaultPath={state.sockPath}
+        sockPathOptions={state.sockPathOptions}
         onConnect={connect}
         error={state.error}
       />
@@ -201,6 +202,7 @@ export default function App() {
               onFaultInject={faultInject}
               traceStatus={state.traceStatus}
               traceEvents={state.traceEvents}
+              traceNotPermitted={state.traceNotPermitted}
               onTraceStart={traceStart}
               onTraceStop={traceStop}
               onTraceQuery={traceQuery}

@@ -7,7 +7,9 @@ import {
   Search,
   Send,
   ShieldAlert,
+  ShieldOff,
 } from 'lucide-react';
+import { notPermittedReason } from '../lib/ccErrors';
 import type {
   DeviceInfo,
   FaultInjectResult,
@@ -46,6 +48,10 @@ interface Props {
   onFaultInject: (slotId: number, faultKind: number, flags: number) => Promise<FaultInjectResult>;
   traceStatus: TraceStatus | null;
   traceEvents: TraceEntry[];
+  // Reason cc_pd's operator authority envelope gave for refusing the trace
+  // relay the last time the background refresh tried it, if any. See
+  // src/lib/ccErrors.ts.
+  traceNotPermitted: string | null;
   onTraceStart: (flags: number) => Promise<TraceStatus>;
   onTraceStop: () => Promise<TraceStatus>;
   onTraceQuery: () => Promise<TraceStatus>;
@@ -71,6 +77,7 @@ export function ApiPanel({
   onFaultInject,
   traceStatus,
   traceEvents,
+  traceNotPermitted,
   onTraceStart,
   onTraceStop,
   onTraceQuery,
@@ -95,6 +102,13 @@ export function ApiPanel({
   const [traceState, setTraceState] = useState<TraceStatus | null>(traceStatus);
   const [traceRows, setTraceRows] = useState<TraceEntry[]>(traceEvents);
   const [message, setMessage] = useState<string | null>(null);
+  // Set once cc_pd's operator authority envelope has refused fault
+  // injection or the trace relay, so the control can be disabled instead of
+  // inviting the operator to keep retrying something that will keep being
+  // refused. We never hide the control outright: whether it's refused is a
+  // fact about the connected cc_pd, not a policy this GUI decides.
+  const [faultNotPermitted, setFaultNotPermitted] = useState<string | null>(null);
+  const [traceRefused, setTraceRefused] = useState<string | null>(traceNotPermitted);
 
   const fbDevices = useMemo(
     () => devices.filter(d => d.dev_type === CC_DEV_TYPE_FB),
@@ -105,6 +119,7 @@ export function ApiPanel({
   useEffect(() => setStatus(sessionStatus), [sessionStatus]);
   useEffect(() => setTraceState(traceStatus), [traceStatus]);
   useEffect(() => setTraceRows(traceEvents), [traceEvents]);
+  useEffect(() => setTraceRefused(traceNotPermitted), [traceNotPermitted]);
   useEffect(() => {
     if (guests.length > 0 && !guests.some(g => g.guest_handle === guestHandle)) {
       setGuestHandle(guests[0].guest_handle);
@@ -175,7 +190,9 @@ export function ApiPanel({
     try {
       setFaultResult(await onFaultInject(slotId, faultKind, faultFlags));
     } catch (e) {
-      setMessage(String(e));
+      const reason = notPermittedReason(e);
+      if (reason) setFaultNotPermitted(reason);
+      else setMessage(String(e));
     }
   }
 
@@ -184,8 +201,11 @@ export function ApiPanel({
     try {
       setTraceState(await onTraceStart(traceFlags));
       setTraceRows([]);
+      setTraceRefused(null);
     } catch (e) {
-      setMessage(String(e));
+      const reason = notPermittedReason(e);
+      if (reason) setTraceRefused(reason);
+      else setMessage(String(e));
     }
   }
 
@@ -194,7 +214,9 @@ export function ApiPanel({
     try {
       setTraceState(await onTraceStop());
     } catch (e) {
-      setMessage(String(e));
+      const reason = notPermittedReason(e);
+      if (reason) setTraceRefused(reason);
+      else setMessage(String(e));
     }
   }
 
@@ -202,8 +224,11 @@ export function ApiPanel({
     setMessage(null);
     try {
       setTraceState(await onTraceQuery());
+      setTraceRefused(null);
     } catch (e) {
-      setMessage(String(e));
+      const reason = notPermittedReason(e);
+      if (reason) setTraceRefused(reason);
+      else setMessage(String(e));
     }
   }
 
@@ -218,8 +243,11 @@ export function ApiPanel({
         overflow_count: result.overflow_count,
       });
       setTraceRows(result.events);
+      setTraceRefused(null);
     } catch (e) {
-      setMessage(String(e));
+      const reason = notPermittedReason(e);
+      if (reason) setTraceRefused(reason);
+      else setMessage(String(e));
     }
   }
 
@@ -297,33 +325,47 @@ export function ApiPanel({
             <NumberField label="Trace limit" value={traceLimit} onChange={setTraceLimit} />
             <button
               onClick={startTrace}
+              disabled={!!traceRefused}
+              title={traceRefused ? `refused by the operator authority envelope: ${traceRefused}` : undefined}
               className="h-9 rounded border border-os-accent/50 px-3 font-mono text-xs text-os-accent
-                         transition hover:bg-os-accent/10"
+                         transition hover:bg-os-accent/10 disabled:opacity-40"
             >
               Start
             </button>
             <button
               onClick={stopTrace}
+              disabled={!!traceRefused}
+              title={traceRefused ? `refused by the operator authority envelope: ${traceRefused}` : undefined}
               className="h-9 rounded border border-os-border px-3 font-mono text-xs text-os-muted
-                         transition hover:border-os-accent/50 hover:text-os-accent"
+                         transition hover:border-os-accent/50 hover:text-os-accent disabled:opacity-40"
             >
               Stop
             </button>
             <button
               onClick={queryTrace}
+              disabled={!!traceRefused}
+              title={traceRefused ? `refused by the operator authority envelope: ${traceRefused}` : undefined}
               className="h-9 rounded border border-os-border px-3 font-mono text-xs text-os-muted
-                         transition hover:border-os-accent/50 hover:text-os-accent"
+                         transition hover:border-os-accent/50 hover:text-os-accent disabled:opacity-40"
             >
               Query
             </button>
             <button
               onClick={dumpTrace}
+              disabled={!!traceRefused}
+              title={traceRefused ? `refused by the operator authority envelope: ${traceRefused}` : undefined}
               className="h-9 rounded border border-os-border px-3 font-mono text-xs text-os-muted
-                         transition hover:border-os-accent/50 hover:text-os-accent"
+                         transition hover:border-os-accent/50 hover:text-os-accent disabled:opacity-40"
             >
               Dump
             </button>
           </div>
+          {traceRefused && (
+            <p className="mb-3 flex items-center gap-2 font-mono text-xs text-amber-400">
+              <ShieldOff aria-hidden="true" className="h-3.5 w-3.5 flex-none" />
+              refused by the operator authority envelope: {traceRefused}
+            </p>
+          )}
           {traceState && (
             <div className="mb-3 grid grid-cols-3 gap-2 font-mono text-xs">
               <Metric label="events" value={String(traceState.event_count)} />
@@ -473,13 +515,23 @@ export function ApiPanel({
             <NumberField label="Fault flags" value={faultFlags} onChange={setFaultFlags} />
             <button
               onClick={injectFault}
+              disabled={!!faultNotPermitted}
+              title={faultNotPermitted ? `refused by the operator authority envelope: ${faultNotPermitted}` : undefined}
               className="flex h-9 items-center gap-2 rounded border border-red-500/40 px-3 font-mono text-xs text-red-300
-                         transition hover:bg-red-500/10"
+                         transition hover:bg-red-500/10 disabled:opacity-40"
             >
-              <ShieldAlert aria-hidden="true" className="h-3.5 w-3.5" />
+              {faultNotPermitted
+                ? <ShieldOff aria-hidden="true" className="h-3.5 w-3.5" />
+                : <ShieldAlert aria-hidden="true" className="h-3.5 w-3.5" />}
               Inject
             </button>
           </div>
+          {faultNotPermitted && (
+            <p className="mt-3 flex items-center gap-2 font-mono text-xs text-amber-400">
+              <ShieldOff aria-hidden="true" className="h-3.5 w-3.5 flex-none" />
+              refused by the operator authority envelope: {faultNotPermitted}
+            </p>
+          )}
           {faultResult && (
             <div className="mt-3 grid grid-cols-3 gap-2 font-mono text-xs">
               <Metric label="result" value={String(faultResult.result)} />

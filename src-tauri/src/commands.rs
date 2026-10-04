@@ -117,6 +117,40 @@ fn allowed_sock_paths() -> Vec<String> {
     allowed
 }
 
+/// Lexically normalize a path string for comparison purposes: collapse `.`
+/// components and resolve `..` against a preceding normal component,
+/// without touching the filesystem.
+///
+/// We deliberately don't use `std::fs::canonicalize` here: the whole point
+/// of `allowed_sock_paths()` is to list sockets agentOS *might* create, and
+/// `canonicalize` fails outright on a path that doesn't exist yet (e.g.
+/// before `cc_pd` has started, or for a resolved default nobody has
+/// connected to yet). A purely lexical normalization is enough to make
+/// `./build/cc_pd.sock` and `build/cc_pd.sock` compare equal without
+/// requiring either to exist.
+fn normalize_path_str(path: &str) -> String {
+    use std::path::Component;
+
+    let mut normalized: Vec<Component> = Vec::new();
+    for component in Path::new(path).components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir
+                if matches!(normalized.last(), Some(Component::Normal(_))) =>
+            {
+                normalized.pop();
+            }
+            other => normalized.push(other),
+        }
+    }
+
+    let mut result = std::path::PathBuf::new();
+    for component in normalized {
+        result.push(component.as_os_str());
+    }
+    result.to_string_lossy().into_owned()
+}
+
 /// Validate a socket path handed in from the frontend against the set of
 /// paths this backend resolved itself.
 ///
@@ -140,7 +174,13 @@ fn validate_sock_path(path: &str, state: &AppState) -> Result<String, String> {
         .map_err(|_| "socket path lock poisoned".to_string())?
         .clone();
 
-    if trimmed == current_default || allowed_sock_paths().iter().any(|p| p == trimmed) {
+    let normalized_trimmed = normalize_path_str(trimmed);
+    let is_allowed = normalized_trimmed == normalize_path_str(&current_default)
+        || allowed_sock_paths()
+            .iter()
+            .any(|p| normalize_path_str(p) == normalized_trimmed);
+
+    if is_allowed {
         return Ok(trimmed.to_string());
     }
 
@@ -148,6 +188,25 @@ fn validate_sock_path(path: &str, state: &AppState) -> Result<String, String> {
         "socket path {trimmed:?} is not a recognized agentOS control-plane socket location \
          (expected the CC_PD_SOCK value, the sibling agentos build directory, or the resolved default)"
     ))
+}
+
+/// Map a `cc_ipc` error to the string returned to the frontend across the
+/// Tauri IPC boundary.
+///
+/// `cc_pd`'s operator authority envelope deliberately refuses snapshot,
+/// restore, fault-injection and trace commands under an untrusted-operator
+/// threat model (see `cc_ipc::status_err`, which tags that refusal with
+/// `io::ErrorKind::PermissionDenied`). That refusal is reported here with a
+/// `NOT_PERMITTED:` prefix so the frontend can tell "cc_pd refused this on
+/// purpose" apart from a transport or protocol fault and react accordingly
+/// (disable the control with an explanation) instead of treating every
+/// failure the same way.
+fn map_cc_error(e: std::io::Error) -> String {
+    if e.kind() == std::io::ErrorKind::PermissionDenied {
+        format!("NOT_PERMITTED: {e}")
+    } else {
+        e.to_string()
+    }
 }
 
 fn env_flag_enabled(name: &str) -> bool {
@@ -302,7 +361,7 @@ pub async fn cc_guest_status(
 #[tauri::command]
 pub async fn cc_snapshot(handle: u32, state: State<'_, AppState>) -> Result<SnapResult, String> {
     with_client(state.client.clone(), move |c: &mut CcClient| {
-        c.snapshot(handle).map_err(|e| e.to_string())
+        c.snapshot(handle).map_err(map_cc_error)
     })
     .await
 }
@@ -316,7 +375,7 @@ pub async fn cc_restore(
 ) -> Result<(), String> {
     with_client(state.client.clone(), move |c: &mut CcClient| {
         c.restore(handle, snap_lo, snap_hi)
-            .map_err(|e| e.to_string())
+            .map_err(map_cc_error)
     })
     .await
 }
@@ -473,7 +532,7 @@ pub async fn cc_fault_inject(
 ) -> Result<FaultInjectResult, String> {
     with_client(state.client.clone(), move |c: &mut CcClient| {
         c.fault_inject(slot_id, fault_kind, flags)
-            .map_err(|e| e.to_string())
+            .map_err(map_cc_error)
     })
     .await
 }
@@ -483,7 +542,7 @@ pub async fn cc_fault_inject(
 #[tauri::command]
 pub async fn cc_trace_start(flags: u32, state: State<'_, AppState>) -> Result<TraceStatus, String> {
     with_client(state.client.clone(), move |c: &mut CcClient| {
-        c.trace_start(flags).map_err(|e| e.to_string())
+        c.trace_start(flags).map_err(map_cc_error)
     })
     .await
 }
@@ -491,7 +550,7 @@ pub async fn cc_trace_start(flags: u32, state: State<'_, AppState>) -> Result<Tr
 #[tauri::command]
 pub async fn cc_trace_stop(state: State<'_, AppState>) -> Result<TraceStatus, String> {
     with_client(state.client.clone(), move |c: &mut CcClient| {
-        c.trace_stop().map_err(|e| e.to_string())
+        c.trace_stop().map_err(map_cc_error)
     })
     .await
 }
@@ -499,7 +558,7 @@ pub async fn cc_trace_stop(state: State<'_, AppState>) -> Result<TraceStatus, St
 #[tauri::command]
 pub async fn cc_trace_query(state: State<'_, AppState>) -> Result<TraceStatus, String> {
     with_client(state.client.clone(), move |c: &mut CcClient| {
-        c.trace_query().map_err(|e| e.to_string())
+        c.trace_query().map_err(map_cc_error)
     })
     .await
 }
@@ -510,7 +569,7 @@ pub async fn cc_trace_dump(
     state: State<'_, AppState>,
 ) -> Result<TraceDumpResult, String> {
     with_client(state.client.clone(), move |c: &mut CcClient| {
-        c.trace_dump(max_events).map_err(|e| e.to_string())
+        c.trace_dump(max_events).map_err(map_cc_error)
     })
     .await
 }
@@ -532,6 +591,32 @@ pub async fn cc_get_sock_path(state: State<'_, AppState>) -> Result<String, Stri
 #[tauri::command]
 pub fn cc_should_autoconnect() -> bool {
     env_flag_enabled("AGENTOS_GUI_AUTOCONNECT")
+}
+
+/// The socket paths `cc_connect` will actually accept: the currently active
+/// resolved default first, followed by every other backend-resolved
+/// candidate (deduplicated by lexical path equality). `ConnectDialog` uses
+/// this to offer a picker over real options instead of a free-text field
+/// the backend would reject anyway.
+#[tauri::command]
+pub async fn cc_allowed_sock_paths(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    let current_default = state
+        .sock_path
+        .lock()
+        .map_err(|_| "socket path lock poisoned".to_string())?
+        .clone();
+
+    let mut paths = vec![current_default];
+    for candidate in allowed_sock_paths() {
+        let normalized = normalize_path_str(&candidate);
+        if !paths
+            .iter()
+            .any(|existing| normalize_path_str(existing) == normalized)
+        {
+            paths.push(candidate);
+        }
+    }
+    Ok(paths)
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -564,6 +649,17 @@ where
 #[cfg(test)]
 mod sock_path_tests {
     use super::*;
+    use std::sync::Mutex as StdMutex;
+
+    // `CC_PD_SOCK` is process-wide state and Rust's default test harness runs
+    // tests in parallel on multiple threads. Every test here either sets/
+    // removes it directly or goes through `allowed_sock_paths()`, which reads
+    // it — so without serializing, two tests mutating it concurrently would
+    // race and flake (one test's `set_var` could leak into another's
+    // assertions, or a `remove_var` could fire between another test's
+    // `set_var` and its read). Hold this lock for the duration of every test
+    // in this module that touches `CC_PD_SOCK`, directly or indirectly.
+    static ENV_LOCK: StdMutex<()> = StdMutex::new(());
 
     fn state_with_default(path: &str) -> AppState {
         AppState {
@@ -574,6 +670,8 @@ mod sock_path_tests {
 
     #[test]
     fn accepts_the_current_resolved_default() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("CC_PD_SOCK");
         let state = state_with_default("build/cc_pd.sock");
         assert_eq!(
             validate_sock_path("build/cc_pd.sock", &state).unwrap(),
@@ -583,6 +681,7 @@ mod sock_path_tests {
 
     #[test]
     fn accepts_the_cc_pd_sock_env_override() {
+        let _guard = ENV_LOCK.lock().unwrap();
         std::env::set_var("CC_PD_SOCK", "/tmp/agentos-test/cc_pd.sock");
         let state = state_with_default("build/cc_pd.sock");
         let result = validate_sock_path("/tmp/agentos-test/cc_pd.sock", &state);
@@ -592,6 +691,7 @@ mod sock_path_tests {
 
     #[test]
     fn rejects_an_arbitrary_unix_socket_path() {
+        let _guard = ENV_LOCK.lock().unwrap();
         std::env::remove_var("CC_PD_SOCK");
         let state = state_with_default("build/cc_pd.sock");
         let err = validate_sock_path("/etc/some/other/service.sock", &state).unwrap_err();
@@ -600,8 +700,20 @@ mod sock_path_tests {
 
     #[test]
     fn rejects_an_empty_path() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let state = state_with_default("build/cc_pd.sock");
         let err = validate_sock_path("   ", &state).unwrap_err();
         assert!(err.contains("must not be empty"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn accepts_a_dot_slash_prefixed_variant_of_the_default() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("CC_PD_SOCK");
+        let state = state_with_default("build/cc_pd.sock");
+        assert_eq!(
+            validate_sock_path("./build/cc_pd.sock", &state).unwrap(),
+            "./build/cc_pd.sock"
+        );
     }
 }

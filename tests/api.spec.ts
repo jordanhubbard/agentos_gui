@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { setupTauriMock, getCallsFor } from './helpers/tauri';
+import { setupTauriMock, getCallsFor, mockError } from './helpers/tauri';
 import { connectApp, switchTab } from './helpers/app';
 
 test.describe('CC API panel', () => {
@@ -74,5 +74,38 @@ test.describe('CC API panel', () => {
     expect((dumps.at(-1)!.args as any).maxEvents).toBe(64);
     await expect(page.getByText('TraceRecorder')).toBeVisible();
     await expect(page.getByText('linux_vmm')).toBeVisible();
+  });
+
+  test('Inject refused by the operator authority envelope disables the control with a reason', async ({ page }) => {
+    await setupTauriMock(page, {
+      cc_fault_inject: mockError(
+        'NOT_PERMITTED: fault_inject refused by the operator authority envelope (CC_ERR_NOT_PERMITTED)',
+      ),
+    });
+    await page.reload();
+    await connectApp(page);
+    await switchTab(page, 'API');
+
+    await page.getByRole('button', { name: 'Inject' }).click();
+    await expect(page.getByText(/refused by the operator authority envelope/)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Inject' })).toBeDisabled();
+  });
+
+  test('Trace controls refused by the operator authority envelope are disabled with a reason', async ({ page }) => {
+    await setupTauriMock(page, {
+      cc_trace_start: mockError(
+        'NOT_PERMITTED: trace_start refused by the operator authority envelope (CC_ERR_NOT_PERMITTED)',
+      ),
+    });
+    await page.reload();
+    await connectApp(page);
+    await switchTab(page, 'API');
+
+    await page.getByRole('button', { name: 'Start' }).click();
+    await expect(page.getByText(/refused by the operator authority envelope/)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Start' })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Stop' })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Query' })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Dump' })).toBeDisabled();
   });
 });

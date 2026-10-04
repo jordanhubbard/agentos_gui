@@ -6,10 +6,12 @@ import type {
   SessionSendResult, SessionRecvResult, FaultInjectResult, TrafficEvent,
   GuestLifecycleResult, TraceDumpResult, TraceEntry, TraceStatus,
 } from '../types';
+import { notPermittedReason } from '../lib/ccErrors';
 
 export interface AgentOSState {
   connected:   boolean;
   sockPath:    string;
+  sockPathOptions: string[];
   guests:      GuestInfo[];
   devices:     DeviceInfo[];
   polecats:    PoecatStatus | null;
@@ -18,6 +20,10 @@ export interface AgentOSState {
   traffic:     TrafficEvent[];
   traceStatus: TraceStatus | null;
   traceEvents: TraceEntry[];
+  // Reason cc_pd's operator authority envelope gave for refusing the trace
+  // relay, if it has — null means either trace hasn't been tried yet or it
+  // isn't refused. See src/lib/ccErrors.ts.
+  traceNotPermitted: string | null;
   logLines:    string[];
   consoleChunks: string[];
   error:       string | null;
@@ -28,6 +34,7 @@ export function useAgentOS() {
   const [state, setState] = useState<AgentOSState>({
     connected:  false,
     sockPath:   'build/cc_pd.sock',
+    sockPathOptions: [],
     guests:     [],
     devices:    [],
     polecats:   null,
@@ -36,6 +43,7 @@ export function useAgentOS() {
     traffic:    [],
     traceStatus: null,
     traceEvents: [],
+    traceNotPermitted: null,
     logLines:   [],
     consoleChunks: [],
     error:      null,
@@ -50,12 +58,13 @@ export function useAgentOS() {
     let cancelled = false;
     Promise.all([
       invoke<string>('cc_get_sock_path'),
+      invoke<string[]>('cc_allowed_sock_paths').catch(() => []),
       invoke<boolean>('cc_should_autoconnect'),
     ])
-      .then(async ([sockPath, shouldAutoconnect]) => {
+      .then(async ([sockPath, sockPathOptions, shouldAutoconnect]) => {
         if (cancelled || !sockPath) return;
 
-        setState(s => ({ ...s, sockPath }));
+        setState(s => ({ ...s, sockPath, sockPathOptions }));
         if (!shouldAutoconnect) return;
 
         try {
@@ -107,6 +116,7 @@ export function useAgentOS() {
       traffic: [],
       traceStatus: null,
       traceEvents: [],
+      traceNotPermitted: null,
       logLines: [],
       consoleChunks: [],
     }));
@@ -124,8 +134,6 @@ export function useAgentOS() {
         sessions,
         sessionStatus,
         traffic,
-        traceStatus,
-        traceDump,
       ] = await Promise.all([
         invoke<GuestInfo[]>('cc_list_guests'),
         invoke<DeviceInfo[]>('cc_list_devices', { devType: null }),
@@ -133,9 +141,24 @@ export function useAgentOS() {
         invoke<SessionInfo[]>('cc_list_sessions'),
         invoke<SessionStatus>('cc_session_status', { sessionId: null }),
         invoke<TrafficEvent[]>('cc_traffic_events', { limit: 192 }),
-        invoke<TraceStatus>('cc_trace_query'),
-        invoke<TraceDumpResult>('cc_trace_dump', { maxEvents: 128 }),
       ]);
+
+      // Trace relay is part of cc_pd's operator authority envelope and may
+      // be legitimately refused (CC_ERR_NOT_PERMITTED) independently of
+      // everything above. It is deliberately kept out of the Promise.all:
+      // Promise.all rejects wholesale on the first rejection, so a refused
+      // trace call must not take guests/devices/polecats/sessions/traffic
+      // down with it on every single refresh cycle.
+      const [traceStatusResult, traceDumpResult] = await Promise.all([
+        invoke<TraceStatus>('cc_trace_query').catch((e: unknown) => ({ error: e })),
+        invoke<TraceDumpResult>('cc_trace_dump', { maxEvents: 128 }).catch((e: unknown) => ({ error: e })),
+      ]);
+      const traceFailure =
+        ('error' in traceStatusResult && traceStatusResult.error) ||
+        ('error' in traceDumpResult && traceDumpResult.error) ||
+        null;
+      const traceNotPermitted = traceFailure ? notPermittedReason(traceFailure) : null;
+
       const guests = await Promise.all(rawGuests.map(async guest => {
         try {
           const status = await invoke<GuestStatus>('cc_guest_status', {
@@ -157,8 +180,9 @@ export function useAgentOS() {
         sessions,
         sessionStatus,
         traffic,
-        traceStatus,
-        traceEvents: traceDump.events,
+        traceStatus: 'error' in traceStatusResult ? s.traceStatus : traceStatusResult,
+        traceEvents: 'error' in traceDumpResult ? s.traceEvents : traceDumpResult.events,
+        traceNotPermitted,
         error: null,
         refreshing: false,
       }));
