@@ -21,3 +21,36 @@ export function notPermittedReason(error: unknown): string | null {
     ? text.slice(NOT_PERMITTED_PREFIX.length)
     : null;
 }
+
+// `cc_ipc::authority_err` (Rust) tags "the connected cc_pd does not
+// recognize this opcode at all" (CC_ERR_BAD_SESSION on a sessionless call,
+// which can only mean an older cc_pd that predates the opcode) with
+// `io::ErrorKind::Unsupported`, which `commands.rs::map_cc_error` prefixes
+// `NOT_SUPPORTED: `. This is distinct from NOT_PERMITTED (the running
+// cc_pd knows the opcode but its operator envelope refuses it) and from an
+// ordinary transport failure.
+const NOT_SUPPORTED_PREFIX = 'NOT_SUPPORTED: ';
+
+export function notSupportedReason(error: unknown): string | null {
+  const text = typeof error === 'string' ? error : String(error);
+  return text.startsWith(NOT_SUPPORTED_PREFIX)
+    ? text.slice(NOT_SUPPORTED_PREFIX.length)
+    : null;
+}
+
+/**
+ * Render any `cc_ipc` failure as a short, specific reason: "not supported by
+ * this cc_pd" vs. "refused by the operator authority envelope" vs. a plain
+ * transport/protocol failure. Used by views (like the authority/topology
+ * view) that must say why data is unavailable rather than silently falling
+ * back to something that looks like real data.
+ */
+export function describeCcFailure(error: unknown): string {
+  const notSupported = notSupportedReason(error);
+  if (notSupported !== null) return `not supported by this cc_pd: ${notSupported}`;
+
+  const notPermitted = notPermittedReason(error);
+  if (notPermitted !== null) return `refused by the operator authority envelope: ${notPermitted}`;
+
+  return typeof error === 'string' ? error : String(error);
+}

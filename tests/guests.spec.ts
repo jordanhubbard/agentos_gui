@@ -95,12 +95,17 @@ test.describe('Guest list', () => {
       await expect(page.getByText('selected 0x00000002')).toBeVisible();
     });
 
-    test('shows the selected guest topology graph', async ({ page }) => {
+    test('shows the authority relation for recorded protection domains', async ({ page }) => {
+      // The topology view renders the real MSG_CC_AUTHORITY snapshot (see
+      // tests/helpers/tauri.ts's cc_authority mock), not a hardcoded
+      // diagram: domain names and capability kinds come straight from it.
       await expect(page.getByText('Topology')).toBeVisible();
-      await expect(page.getByText('cc_pd', { exact: true })).toBeVisible();
+      await expect(page.getByText('root task', { exact: true })).toBeVisible();
+      await expect(page.getByText('nameserver', { exact: true })).toBeVisible();
       await expect(page.getByText('vibe_engine', { exact: true })).toBeVisible();
-      await expect(page.getByText('guest_pd', { exact: true })).toBeVisible();
-      await expect(page.getByText('serial_pd', { exact: true })).toBeVisible();
+      await expect(page.getByText('cc_pd', { exact: true })).toBeVisible();
+      await expect(page.getByText('tcb×2', { exact: true })).toBeVisible();
+      await expect(page.getByText(/not live kernel state/)).toBeVisible();
     });
 
     test('shows recent CC message traffic', async ({ page }) => {

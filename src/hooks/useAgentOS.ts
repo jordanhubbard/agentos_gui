@@ -4,9 +4,9 @@ import type {
   GuestInfo, GuestStatus, DeviceInfo, DeviceStatusInfo, PoecatStatus, SnapResult,
   InputEvent, GuestCreateRequest, GuestCreateResult, SessionInfo, SessionStatus,
   SessionSendResult, SessionRecvResult, FaultInjectResult, TrafficEvent,
-  GuestLifecycleResult, TraceDumpResult, TraceEntry, TraceStatus,
+  GuestLifecycleResult, TraceDumpResult, TraceEntry, TraceStatus, AuthoritySnapshot,
 } from '../types';
-import { notPermittedReason } from '../lib/ccErrors';
+import { notPermittedReason, describeCcFailure } from '../lib/ccErrors';
 
 export interface AgentOSState {
   connected:   boolean;
@@ -24,6 +24,15 @@ export interface AgentOSState {
   // relay, if it has — null means either trace hasn't been tried yet or it
   // isn't refused. See src/lib/ccErrors.ts.
   traceNotPermitted: string | null;
+  // The boot-time authority snapshot (MSG_CC_AUTHORITY), or null if it has
+  // not been fetched yet or the last fetch failed. See
+  // src/components/TopologyGraph.tsx for why a failure must render an
+  // explicit "unavailable" state rather than falling back to anything that
+  // looks like real data.
+  authority: AuthoritySnapshot | null;
+  // Reason the last authority fetch failed, or null if it hasn't been tried
+  // yet or last succeeded. Cleared only by a successful fetch.
+  authorityError: string | null;
   logLines:    string[];
   consoleChunks: string[];
   error:       string | null;
@@ -44,6 +53,8 @@ export function useAgentOS() {
     traceStatus: null,
     traceEvents: [],
     traceNotPermitted: null,
+    authority: null,
+    authorityError: null,
     logLines:   [],
     consoleChunks: [],
     error:      null,
@@ -117,6 +128,8 @@ export function useAgentOS() {
       traceStatus: null,
       traceEvents: [],
       traceNotPermitted: null,
+      authority: null,
+      authorityError: null,
       logLines: [],
       consoleChunks: [],
     }));
@@ -159,6 +172,19 @@ export function useAgentOS() {
         null;
       const traceNotPermitted = traceFailure ? notPermittedReason(traceFailure) : null;
 
+      // The authority snapshot is read independently of everything above
+      // for the same reason trace is: it must never take the rest of a
+      // refresh cycle down with it, and a failure here must become an
+      // explicit "unavailable" reason in state, never a silent fallback to
+      // stale or fabricated data (see TopologyGraph.tsx).
+      const authorityResult = await invoke<AuthoritySnapshot>('cc_authority')
+        .then(snapshot => ({ snapshot }))
+        .catch((e: unknown) => ({ error: e }));
+      const authority = 'snapshot' in authorityResult ? authorityResult.snapshot : null;
+      const authorityError = 'error' in authorityResult
+        ? describeCcFailure(authorityResult.error)
+        : null;
+
       const guests = await Promise.all(rawGuests.map(async guest => {
         try {
           const status = await invoke<GuestStatus>('cc_guest_status', {
@@ -183,6 +209,8 @@ export function useAgentOS() {
         traceStatus: 'error' in traceStatusResult ? s.traceStatus : traceStatusResult,
         traceEvents: 'error' in traceDumpResult ? s.traceEvents : traceDumpResult.events,
         traceNotPermitted,
+        authority,
+        authorityError,
         error: null,
         refreshing: false,
       }));

@@ -53,6 +53,27 @@ export const DEFAULT_MOCKS: Record<string, unknown> = {
     { dev_type: 4, dev_handle: 10, state: 1 },  // Framebuffer
   ],
   cc_list_polecats:      { total: 8, busy: 3, idle: 5 },
+  // A synthetic MSG_CC_AUTHORITY snapshot, shaped like the real
+  // aos_authority_snapshot_t: a root sentinel row (pd_index 0xFFFFFFFF) and
+  // a handful of named protection domains with per-kind capability counts.
+  // Kind order matches AUTHORITY_KIND_NAMES in src/types.ts.
+  cc_authority: {
+    version: 1,
+    pd_count: 4,
+    total_recorded: 23,
+    truncated_adds: 0,
+    saturated: false,
+    rows: [
+      { pd_index: 0xffffffff, is_root: true, name: 'root-cnode',
+        counts: [3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
+      { pd_index: 0, is_root: false, name: 'nameserver',
+        counts: [0, 1, 2, 1, 0, 0, 0, 0, 0, 0, 0] },
+      { pd_index: 12, is_root: false, name: 'vibe_engine',
+        counts: [1, 2, 3, 1, 1, 0, 0, 0, 0, 0, 1] },
+      { pd_index: 43, is_root: false, name: 'cc_pd',
+        counts: [0, 1, 4, 2, 1, 0, 0, 0, 0, 0, 0] },
+    ],
+  },
   cc_log_stream:         '',
   cc_snapshot:           { snap_lo: 1, snap_hi: 2 },
   cc_restore:            null,

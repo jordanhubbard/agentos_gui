@@ -20,6 +20,7 @@
     "allow-cc-resume-guest",
     "allow-cc-destroy-guest",
     "allow-cc-list-devices",
+    "allow-cc-authority",
     "allow-cc-list-polecats",
     "allow-cc-log-stream",
     "allow-cc-send-input",

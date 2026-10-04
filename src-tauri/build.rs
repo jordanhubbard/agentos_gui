@@ -23,6 +23,7 @@ fn main() {
             "cc_resume_guest",
             "cc_destroy_guest",
             "cc_list_devices",
+            "cc_authority",
             "cc_list_polecats",
             "cc_log_stream",
             "cc_send_input",

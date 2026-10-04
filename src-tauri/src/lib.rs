@@ -24,6 +24,7 @@ pub fn run() {
             commands::cc_resume_guest,
             commands::cc_destroy_guest,
             commands::cc_list_devices,
+            commands::cc_authority,
             commands::cc_list_polecats,
             commands::cc_log_stream,
             commands::cc_send_input,

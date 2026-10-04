@@ -3,10 +3,10 @@ use std::sync::{Arc, Mutex};
 use tauri::State;
 
 use crate::cc_ipc::{
-    CcClient, DeviceInfo, DeviceStatusInfo, FaultInjectResult, GuestCreateRequest,
-    GuestCreateResult, GuestInfo, GuestLifecycleResult, GuestStatus, InputEvent, PoecatStatus,
-    SessionInfo, SessionRecvResult, SessionSendResult, SessionStatus, SnapResult, TraceDumpResult,
-    TraceStatus, TrafficEvent, CC_DEV_TYPE_COUNT,
+    AuthoritySnapshot, CcClient, DeviceInfo, DeviceStatusInfo, FaultInjectResult,
+    GuestCreateRequest, GuestCreateResult, GuestInfo, GuestLifecycleResult, GuestStatus,
+    InputEvent, PoecatStatus, SessionInfo, SessionRecvResult, SessionSendResult, SessionStatus,
+    SnapResult, TraceDumpResult, TraceStatus, TrafficEvent, CC_DEV_TYPE_COUNT,
 };
 
 type ClientCell = Arc<Mutex<Option<CcClient>>>;
@@ -201,9 +201,16 @@ fn validate_sock_path(path: &str, state: &AppState) -> Result<String, String> {
 /// purpose" apart from a transport or protocol fault and react accordingly
 /// (disable the control with an explanation) instead of treating every
 /// failure the same way.
+///
+/// `cc_ipc::authority_err` separately tags "the connected cc_pd does not
+/// recognize this opcode at all" with `io::ErrorKind::Unsupported`
+/// (distinct from an envelope refusal), reported here with a
+/// `NOT_SUPPORTED:` prefix.
 fn map_cc_error(e: std::io::Error) -> String {
     if e.kind() == std::io::ErrorKind::PermissionDenied {
         format!("NOT_PERMITTED: {e}")
+    } else if e.kind() == std::io::ErrorKind::Unsupported {
+        format!("NOT_SUPPORTED: {e}")
     } else {
         e.to_string()
     }
@@ -451,6 +458,23 @@ pub async fn cc_list_devices(
                 Ok(all)
             }
         }
+    })
+    .await
+}
+
+// ── Authority ─────────────────────────────────────────────────────────────────
+
+/// Read the boot-time authority snapshot (`MSG_CC_AUTHORITY`): a ledger of
+/// what the root task recorded granting to each protection domain, by
+/// capability kind. This is NOT live kernel state and does NOT verify the
+/// subsetting invariant -- see `cc_ipc::AuthoritySnapshot`. On failure
+/// (including an older `cc_pd` that does not know this opcode) the error
+/// string is returned as-is for the frontend to render an explicit
+/// "authority data unavailable" state; there is no drawn-diagram fallback.
+#[tauri::command]
+pub async fn cc_authority(state: State<'_, AppState>) -> Result<AuthoritySnapshot, String> {
+    with_client(state.client.clone(), |c: &mut CcClient| {
+        c.authority().map_err(map_cc_error)
     })
     .await
 }

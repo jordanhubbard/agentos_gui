@@ -111,6 +111,59 @@ export interface TraceDumpResult {
   events:         TraceEntry[];
 }
 
+// ── Authority snapshot (MSG_CC_AUTHORITY, 0x2620) ─────────────────────────────
+//
+// A ledger of what the root task recorded granting to each protection
+// domain at boot, by capability kind -- NOT a reading of live kernel state
+// (seL4 exposes no capability-enumeration syscall) and NOT a verification
+// of the subsetting invariant, which the kernel enforces unconditionally
+// and independently. See src/components/TopologyGraph.tsx for how this is
+// labelled in the UI.
+
+/** Capability kind order is ABI (platform/include/platform/authority.h) --
+ * append only, never reorder. Index into `AuthorityRow.counts` by this
+ * order. */
+export const AUTHORITY_KIND_NAMES = [
+  'untyped',
+  'tcb',
+  'endpoint',
+  'notification',
+  'cnode',
+  'frame',
+  'vspace',
+  'irq_handler',
+  'sched_context',
+  'reply',
+  'other',
+] as const;
+
+/** Sentinel `pd_index` for the root task's own row (R16) -- root's initial
+ * capabilities would otherwise collide with descriptor index 0
+ * (`nameserver`). */
+export const AUTHORITY_ROOT_PD_INDEX = 0xffffffff;
+
+export interface AuthorityRow {
+  pd_index: number;
+  /** True for the root task's sentinel row (`pd_index === 0xFFFFFFFF`). */
+  is_root: boolean;
+  /** Decoded from a 32-byte NUL-padded (not NUL-terminated) field, rendered
+   * as recorded -- including any upstream truncation already baked into
+   * the name agentOS recorded (e.g. "operator_sessio" for
+   * "operator_session"). Never reconstructed or guessed. */
+  name: string;
+  /** One count per `AUTHORITY_KIND_NAMES` entry, same order. */
+  counts: number[];
+}
+
+export interface AuthoritySnapshot {
+  version: number;
+  pd_count: number;
+  total_recorded: number;
+  truncated_adds: number;
+  saturated: boolean;
+  rows: AuthorityRow[];
+}
+
 export interface TrafficEvent {
   seq:           number;
   at_ms:         number;

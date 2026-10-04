@@ -54,6 +54,7 @@ pub const MSG_CC_TRACE_STOP: u32 = 0x2617;
 pub const MSG_CC_TRACE_QUERY: u32 = 0x2618;
 pub const MSG_CC_TRACE_DUMP: u32 = 0x2619;
 pub const MSG_CC_CONNECTION_SYNC: u32 = 0x261F;
+pub const MSG_CC_AUTHORITY: u32 = 0x2620;
 
 // ── Connection bootstrap constants (cc_contract.h) ───────────────────────────
 // Source of truth in the agentOS tree: kernel/agentos-root-task/include/
@@ -89,6 +90,200 @@ fn status_err(context: &str, ok: u32) -> io::Error {
         )
     } else {
         io::Error::new(io::ErrorKind::Other, format!("{context} err {ok}"))
+    }
+}
+
+// ── Authority snapshot ABI (platform/include/platform/authority.h) ──────────
+//
+// A ledger of what the root task recorded granting to each protection
+// domain at boot, by capability kind. seL4 exposes no capability-
+// enumeration syscall (seL4_DebugCapIdentify is CONFIG_DEBUG_BUILD-only and
+// disabled in the shipped release kernel), so this is NOT a reading of live
+// kernel state and it does NOT verify the subsetting invariant -- the
+// kernel enforces that unconditionally and independently. It is a
+// boot-time record, nothing more.
+//
+// Re-declared here by design (see README.md) from the agentOS tree's
+// platform/include/platform/authority.h and
+// kernel/agentos-root-task/include/contracts/cc_contract.h. Note this is
+// NOT the layout a literal reading of the task description would suggest
+// (name[48], 80-byte rows): the actual struct is `__attribute__((packed))`
+// with a 32-byte name field, giving 60-byte rows. Verified directly against
+// the agentOS source (platform/include/platform/authority.h) rather than
+// inferred.
+pub const AOS_AUTHORITY_VERSION: u32 = 1;
+pub const AOS_AUTHORITY_MAX_PDS: usize = 32;
+pub const AOS_AUTHORITY_NAME_LEN: usize = 32;
+pub const AOS_AUTHORITY_KIND_COUNT: usize = 11;
+
+/// Sentinel `pd_index` for the root task's own row (R16): root's initial
+/// capabilities would otherwise collide with descriptor index 0
+/// (`nameserver`) and be silently merged into its row. Render this row as
+/// "the root task," never as a domain with an absurd numeric index.
+pub const AOS_AUTHORITY_ROOT_PD_INDEX: u32 = 0xFFFF_FFFF;
+
+/// Capability kind order is ABI (platform/include/platform/authority.h) --
+/// append only, never reorder.
+pub const AUTHORITY_KIND_NAMES: [&str; AOS_AUTHORITY_KIND_COUNT] = [
+    "untyped",
+    "tcb",
+    "endpoint",
+    "notification",
+    "cnode",
+    "frame",
+    "vspace",
+    "irq_handler",
+    "sched_context",
+    "reply",
+    "other",
+];
+
+const AUTHORITY_HEADER_LEN: usize = 24;
+// pd_index(4) + name(32) + counts(11 * 2 = 22) + reserved(2) = 60, no
+// alignment padding: the C struct is `__attribute__((packed))`.
+const AUTHORITY_ROW_LEN: usize = 4 + AOS_AUTHORITY_NAME_LEN + AOS_AUTHORITY_KIND_COUNT * 2 + 2;
+const AUTHORITY_SNAPSHOT_LEN: usize = AUTHORITY_HEADER_LEN + AOS_AUTHORITY_MAX_PDS * AUTHORITY_ROW_LEN;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthorityRow {
+    pub pd_index: u32,
+    /// True for the root task's sentinel row (`pd_index == 0xFFFFFFFF`).
+    pub is_root: bool,
+    /// Decoded from a 32-byte NUL-padded (not NUL-terminated) field.
+    /// Rendered as-is -- including any upstream truncation already baked
+    /// into the recorded name -- never reconstructed or guessed.
+    pub name: String,
+    /// One count per `AUTHORITY_KIND_NAMES` entry, same order.
+    pub counts: [u16; AOS_AUTHORITY_KIND_COUNT],
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthoritySnapshot {
+    pub version: u32,
+    pub pd_count: u32,
+    pub total_recorded: u32,
+    pub truncated_adds: u32,
+    pub saturated: bool,
+    pub rows: Vec<AuthorityRow>,
+}
+
+/// Parse a raw `aos_authority_snapshot_t` out of reply shmem. Validates
+/// `version` and bounds `pd_count` to `AOS_AUTHORITY_MAX_PDS` before
+/// indexing anything -- a malformed or hostile `cc_pd` must not be able to
+/// walk this client off the end of the buffer.
+fn parse_authority_snapshot(shmem: &[u8]) -> io::Result<AuthoritySnapshot> {
+    if shmem.len() < AUTHORITY_HEADER_LEN {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "authority snapshot shorter than its {AUTHORITY_HEADER_LEN}-byte header \
+                 ({} bytes received)",
+                shmem.len()
+            ),
+        ));
+    }
+
+    let version = u32::from_le_bytes(shmem[0..4].try_into().unwrap());
+    if version != AOS_AUTHORITY_VERSION {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "authority snapshot version {version} does not match the \
+                 version this client understands ({AOS_AUTHORITY_VERSION})"
+            ),
+        ));
+    }
+
+    let pd_count_raw = u32::from_le_bytes(shmem[4..8].try_into().unwrap());
+    if pd_count_raw as usize > AOS_AUTHORITY_MAX_PDS {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "authority snapshot pd_count {pd_count_raw} exceeds the ABI \
+                 maximum of {AOS_AUTHORITY_MAX_PDS}"
+            ),
+        ));
+    }
+    let pd_count = pd_count_raw as usize;
+
+    let total_recorded = u32::from_le_bytes(shmem[8..12].try_into().unwrap());
+    let truncated_adds = u32::from_le_bytes(shmem[12..16].try_into().unwrap());
+    let saturated = u32::from_le_bytes(shmem[16..20].try_into().unwrap()) != 0;
+    // shmem[20..24] is reserved.
+
+    let rows_end = AUTHORITY_HEADER_LEN + pd_count * AUTHORITY_ROW_LEN;
+    if shmem.len() < rows_end {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "authority snapshot truncated: pd_count {pd_count} needs \
+                 {rows_end} bytes, only {} received",
+                shmem.len()
+            ),
+        ));
+    }
+
+    let mut rows = Vec::with_capacity(pd_count);
+    for i in 0..pd_count {
+        let base = AUTHORITY_HEADER_LEN + i * AUTHORITY_ROW_LEN;
+        let row = &shmem[base..base + AUTHORITY_ROW_LEN];
+
+        let pd_index = u32::from_le_bytes(row[0..4].try_into().unwrap());
+
+        // NUL-padded, not NUL-terminated: find the first NUL (there is
+        // always one, since the source zero-fills the field) and render
+        // only the bytes before it, lossily -- never assume this is a
+        // well-formed C string beyond that bound.
+        let name_bytes = &row[4..4 + AOS_AUTHORITY_NAME_LEN];
+        let nul_at = name_bytes.iter().position(|&b| b == 0).unwrap_or(name_bytes.len());
+        let name = String::from_utf8_lossy(&name_bytes[..nul_at]).into_owned();
+
+        let counts_off = 4 + AOS_AUTHORITY_NAME_LEN;
+        let mut counts = [0u16; AOS_AUTHORITY_KIND_COUNT];
+        for (k, slot) in counts.iter_mut().enumerate() {
+            let o = counts_off + k * 2;
+            *slot = u16::from_le_bytes(row[o..o + 2].try_into().unwrap());
+        }
+
+        rows.push(AuthorityRow {
+            pd_index,
+            is_root: pd_index == AOS_AUTHORITY_ROOT_PD_INDEX,
+            name,
+            counts,
+        });
+    }
+
+    Ok(AuthoritySnapshot {
+        version,
+        pd_count: pd_count_raw,
+        total_recorded,
+        truncated_adds,
+        saturated,
+        rows,
+    })
+}
+
+/// Map a non-OK `cc_pd` status from `MSG_CC_AUTHORITY` to a distinct error.
+///
+/// `CC_ERR_BAD_SESSION` (2) is cc_dispatch's fallthrough `default:` case for
+/// an opcode it does not recognize at all -- and since this call carries no
+/// session (it is sessionless, like INSPECT), a session-related error here
+/// can only mean the connected `cc_pd` predates `MSG_CC_AUTHORITY` and does
+/// not know the opcode. Reported as `io::ErrorKind::Unsupported` so callers
+/// (see `commands.rs`) can tell that apart from `CC_ERR_NOT_PERMITTED`
+/// (envelope refusal) and from an ordinary transport failure, instead of
+/// flattening all three into one generic message.
+const CC_ERR_BAD_SESSION: u32 = 2;
+
+fn authority_err(ok: u32) -> io::Error {
+    if ok == CC_ERR_BAD_SESSION {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            "cc_pd did not recognize MSG_CC_AUTHORITY; the connected cc_pd \
+             likely predates this opcode",
+        )
+    } else {
+        status_err("authority", ok)
     }
 }
 
@@ -642,6 +837,23 @@ impl CcClient {
         })
     }
 
+    /// Read the boot-time authority snapshot: a ledger of what the root
+    /// task recorded granting to each protection domain, by capability
+    /// kind. Sessionless, like `MSG_CC_INSPECT`. See `authority_err` for
+    /// how an unsupported opcode is distinguished from an envelope refusal.
+    pub fn authority(&mut self) -> io::Result<AuthoritySnapshot> {
+        // The full packed struct (header + all 32 rows) must fit in the
+        // 4080-byte shmem region this reply carries; this is an ABI
+        // invariant, not something that can vary at runtime.
+        debug_assert!(AUTHORITY_SNAPSHOT_LEN <= CC_REPLY_SIZE - 16);
+        let reply = self.send_recv(MSG_CC_AUTHORITY, AOS_AUTHORITY_VERSION, 0, 0, &[])?;
+        let ok = u32::from_le_bytes(reply[0..4].try_into().unwrap());
+        if ok != CC_OK {
+            return Err(authority_err(ok));
+        }
+        parse_authority_snapshot(&reply[16..])
+    }
+
     pub fn snapshot(&mut self, handle: u32) -> io::Result<SnapResult> {
         let reply = self.send_recv(MSG_CC_SNAPSHOT, handle, 0, 0, &[])?;
         let ok = u32::from_le_bytes(reply[0..4].try_into().unwrap());
@@ -1091,6 +1303,7 @@ fn opcode_name(opcode: u32) -> &'static str {
         MSG_CC_TRACE_STOP => "TRACE_STOP",
         MSG_CC_TRACE_QUERY => "TRACE_QUERY",
         MSG_CC_TRACE_DUMP => "TRACE_DUMP",
+        MSG_CC_AUTHORITY => "AUTHORITY",
         _ => "UNKNOWN",
     }
 }
@@ -1120,6 +1333,7 @@ fn opcode_has_ok_mr(opcode: u32) -> bool {
             | MSG_CC_TRACE_STOP
             | MSG_CC_TRACE_QUERY
             | MSG_CC_TRACE_DUMP
+            | MSG_CC_AUTHORITY
     )
 }
 
@@ -1132,6 +1346,7 @@ fn reply_shmem_len(opcode: u32, mr: [u32; 4]) -> u32 {
         MSG_CC_GUEST_STATUS if mr[0] == 0 => 32,
         MSG_CC_DEVICE_STATUS if mr[0] == 0 => 16,
         MSG_CC_TRACE_DUMP if mr[0] == 0 => mr[2].min(CC_SHMEM_SIZE as u32),
+        MSG_CC_AUTHORITY if mr[0] == 0 => mr[1].min(CC_SHMEM_SIZE as u32),
         _ => 0,
     }
 }
@@ -1254,5 +1469,152 @@ mod tests {
             parse_credential_hex(&"11".repeat(CC_OPERATOR_TOKEN_BYTES + 1)).is_err(),
             "too long must fail"
         );
+    }
+
+    // ── Authority snapshot parsing (task-3-brief.md) ─────────────────────────
+    //
+    // There is no live cc_pd in this environment, so these tests build a
+    // synthetic `aos_authority_snapshot_t` byte buffer by hand, matching the
+    // packed C layout exactly (platform/include/platform/authority.h), and
+    // assert the parser decodes it correctly. This is the achievable proof
+    // of the parser's correctness; it is not evidence of a real connection.
+
+    /// Write one 60-byte packed row (pd_index, 32-byte name, 11 counts,
+    /// reserved) into `buf` at `offset`.
+    fn write_authority_row(
+        buf: &mut [u8],
+        offset: usize,
+        pd_index: u32,
+        name: &[u8],
+        counts: &[u16; AOS_AUTHORITY_KIND_COUNT],
+    ) {
+        buf[offset..offset + 4].copy_from_slice(&pd_index.to_le_bytes());
+        let name_field = &mut buf[offset + 4..offset + 4 + AOS_AUTHORITY_NAME_LEN];
+        name_field.fill(0);
+        let n = name.len().min(AOS_AUTHORITY_NAME_LEN);
+        name_field[..n].copy_from_slice(&name[..n]);
+        let counts_off = offset + 4 + AOS_AUTHORITY_NAME_LEN;
+        for (k, c) in counts.iter().enumerate() {
+            buf[counts_off + k * 2..counts_off + k * 2 + 2].copy_from_slice(&c.to_le_bytes());
+        }
+        // reserved u16 at counts_off + 22..+24 stays zero.
+    }
+
+    fn synthetic_snapshot_buf(pd_count: u32) -> Vec<u8> {
+        let mut buf = vec![0u8; AUTHORITY_SNAPSHOT_LEN];
+        buf[0..4].copy_from_slice(&AOS_AUTHORITY_VERSION.to_le_bytes());
+        buf[4..8].copy_from_slice(&pd_count.to_le_bytes());
+        buf[8..12].copy_from_slice(&7u32.to_le_bytes()); // total_recorded
+        buf[12..16].copy_from_slice(&0u32.to_le_bytes()); // truncated_adds
+        buf[16..20].copy_from_slice(&0u32.to_le_bytes()); // saturated
+        buf
+    }
+
+    #[test]
+    fn parses_root_sentinel_and_a_named_domain() {
+        let mut buf = synthetic_snapshot_buf(2);
+
+        let mut root_counts = [0u16; AOS_AUTHORITY_KIND_COUNT];
+        root_counts[0] = 3; // untyped
+
+        let mut pd_counts = [0u16; AOS_AUTHORITY_KIND_COUNT];
+        pd_counts[1] = 4; // tcb
+        pd_counts[2] = 1; // endpoint
+
+        write_authority_row(
+            &mut buf,
+            AUTHORITY_HEADER_LEN,
+            AOS_AUTHORITY_ROOT_PD_INDEX,
+            b"root-cnode",
+            &root_counts,
+        );
+        write_authority_row(
+            &mut buf,
+            AUTHORITY_HEADER_LEN + AUTHORITY_ROW_LEN,
+            0,
+            b"nameserver",
+            &pd_counts,
+        );
+
+        let snap = parse_authority_snapshot(&buf).expect("synthetic snapshot must parse");
+        assert_eq!(snap.version, AOS_AUTHORITY_VERSION);
+        assert_eq!(snap.pd_count, 2);
+        assert_eq!(snap.total_recorded, 7);
+        assert!(!snap.saturated);
+        assert_eq!(snap.rows.len(), 2);
+
+        assert_eq!(snap.rows[0].pd_index, AOS_AUTHORITY_ROOT_PD_INDEX);
+        assert!(snap.rows[0].is_root, "0xFFFFFFFF must be rendered as the root task");
+        assert_eq!(snap.rows[0].name, "root-cnode");
+        assert_eq!(snap.rows[0].counts[0], 3);
+
+        assert_eq!(snap.rows[1].pd_index, 0);
+        assert!(!snap.rows[1].is_root, "descriptor index 0 (nameserver) is not root");
+        assert_eq!(snap.rows[1].name, "nameserver");
+        assert_eq!(snap.rows[1].counts[1], 4);
+        assert_eq!(snap.rows[1].counts[2], 1);
+    }
+
+    #[test]
+    fn name_truncates_at_the_recorded_nul_without_assuming_a_c_string() {
+        // "operator_session" is 17 bytes; the upstream 16-byte source field
+        // (cap_accounting.h's cap_acct_entry_t.name) truncates it to
+        // "operator_sessio" (15 chars) before it ever reaches the 32-byte
+        // authority row. The parser must render exactly what arrived, not
+        // guess at or "fix" a longer name.
+        let mut buf = synthetic_snapshot_buf(1);
+        write_authority_row(
+            &mut buf,
+            AUTHORITY_HEADER_LEN,
+            7,
+            b"operator_sessio",
+            &[0u16; AOS_AUTHORITY_KIND_COUNT],
+        );
+
+        let snap = parse_authority_snapshot(&buf).unwrap();
+        assert_eq!(snap.rows[0].name, "operator_sessio");
+    }
+
+    #[test]
+    fn rejects_an_unknown_version_before_indexing_anything() {
+        let mut buf = synthetic_snapshot_buf(1);
+        buf[0..4].copy_from_slice(&999u32.to_le_bytes());
+        let err = parse_authority_snapshot(&buf).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("version"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn rejects_pd_count_above_the_abi_maximum_before_indexing_anything() {
+        let mut buf = synthetic_snapshot_buf(0);
+        buf[4..8].copy_from_slice(&(AOS_AUTHORITY_MAX_PDS as u32 + 1).to_le_bytes());
+        let err = parse_authority_snapshot(&buf).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("pd_count"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn rejects_a_buffer_truncated_before_its_declared_rows() {
+        let buf = synthetic_snapshot_buf(2);
+        let truncated = &buf[..AUTHORITY_HEADER_LEN + AUTHORITY_ROW_LEN]; // only 1 of 2 rows
+        let err = parse_authority_snapshot(truncated).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn an_unrecognized_opcode_status_is_reported_as_unsupported_not_not_permitted() {
+        // CC_ERR_BAD_SESSION (2) on this sessionless call means the
+        // connected cc_pd's dispatcher fell through to its `default:` case
+        // -- i.e. it does not know MSG_CC_AUTHORITY at all (an older
+        // cc_pd). This must be distinguishable from CC_ERR_NOT_PERMITTED
+        // (11), an authority-envelope refusal, and from a transport error.
+        let unsupported = authority_err(CC_ERR_BAD_SESSION);
+        assert_eq!(unsupported.kind(), io::ErrorKind::Unsupported);
+
+        let refused = authority_err(CC_ERR_NOT_PERMITTED);
+        assert_eq!(refused.kind(), io::ErrorKind::PermissionDenied);
+
+        let other = authority_err(9); // CC_ERR_INVALID_ARG
+        assert_eq!(other.kind(), io::ErrorKind::Other);
     }
 }

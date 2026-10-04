@@ -1,162 +1,21 @@
-import { Activity, GitBranch, Layers, Network, Radio, Server, Shield } from 'lucide-react';
-import type { DeviceInfo, GuestInfo, SessionInfo, TraceEntry, TrafficEvent } from '../types';
-import {
-  DEV_TYPE_NAME,
-  CC_DEV_TYPE_BLOCK,
-  CC_DEV_TYPE_FB,
-  CC_DEV_TYPE_NET,
-  CC_DEV_TYPE_SERIAL,
-  CC_DEV_TYPE_USB,
-} from '../types';
-import { DeviceIcon } from './DeviceIcon';
+import { Activity, AlertTriangle, GitBranch, Info, Shield } from 'lucide-react';
+import type { AuthorityRow, AuthoritySnapshot, TraceEntry, TrafficEvent } from '../types';
+import { AUTHORITY_KIND_NAMES } from '../types';
 
 interface Props {
-  guest: GuestInfo | null;
-  devices: DeviceInfo[];
-  sessions: SessionInfo[];
   traffic: TrafficEvent[];
   traceEvents: TraceEntry[];
+  // The boot-time authority snapshot (MSG_CC_AUTHORITY), or null if it
+  // hasn't been fetched yet or the last fetch failed -- see
+  // `authorityError` for why. There is no drawn-diagram fallback for a
+  // failure: that is exactly how this view's old hardcoded node layout came
+  // to be mistaken for real data.
+  authority: AuthoritySnapshot | null;
+  authorityError: string | null;
 }
 
-type NodeKind = 'host' | 'relay' | 'service' | 'guest' | 'device';
-
-interface GraphNode {
-  id: string;
-  label: string;
-  detail: string;
-  x: number;
-  y: number;
-  kind: NodeKind;
-  devType?: number;
-}
-
-interface GraphEdge {
-  from: string;
-  to: string;
-  label: string;
-  active?: boolean;
-}
-
-const DEVICE_BITS = [
-  CC_DEV_TYPE_SERIAL,
-  CC_DEV_TYPE_NET,
-  CC_DEV_TYPE_BLOCK,
-  CC_DEV_TYPE_USB,
-  CC_DEV_TYPE_FB,
-];
-
-const SERVICE_OPS: Record<string, string[]> = {
-  vibe: ['LIST_GUESTS', 'GUEST_STATUS', 'CREATE_GUEST', 'SNAPSHOT', 'RESTORE'],
-  devices: ['LIST_DEVICES', 'DEVICE_STATUS', 'ATTACH_FRAMEBUFFER'],
-  guest: ['SEND_INPUT'],
-  logs: ['LOG_STREAM'],
-  agents: ['LIST_POLECATS'],
-  session: ['CONNECT', 'DISCONNECT', 'LIST', 'STATUS', 'SEND', 'RECV'],
-  trace: ['TRACE_START', 'TRACE_STOP', 'TRACE_QUERY', 'TRACE_DUMP'],
-};
-
-export function TopologyGraph({ guest, devices, sessions, traffic, traceEvents }: Props) {
+export function TopologyGraph({ traffic, traceEvents, authority, authorityError }: Props) {
   const recent = traffic.slice(-32);
-  const hasRecent = (names: string[]) =>
-    recent.some(event => names.includes(event.opcode_name));
-  const hasTraceTo = (pdId: number) =>
-    traceEvents.slice(-64).some(event => event.to_pd === pdId || event.from_pd === pdId);
-
-  const deviceTypes = selectedDeviceTypes(guest, devices);
-  const nodes: GraphNode[] = [
-    {
-      id: 'gui',
-      label: 'agentos_gui',
-      detail: `${traffic.length} cc calls`,
-      x: 8,
-      y: 18,
-      kind: 'host',
-    },
-    {
-      id: 'cc',
-      label: 'cc_pd',
-      detail: `${sessions.length} session${sessions.length === 1 ? '' : 's'}`,
-      x: 31,
-      y: 18,
-      kind: 'relay',
-    },
-    {
-      id: 'vibe',
-      label: 'vibe_engine',
-      detail: 'guest lifecycle',
-      x: 54,
-      y: 18,
-      kind: 'service',
-    },
-    {
-      id: 'agents',
-      label: 'agent_pool',
-      detail: 'workers',
-      x: 78,
-      y: 18,
-      kind: 'service',
-    },
-    {
-      id: 'trace',
-      label: 'trace_recorder',
-      detail: `${traceEvents.length} event${traceEvents.length === 1 ? '' : 's'}`,
-      x: 78,
-      y: 67,
-      kind: 'service',
-    },
-    {
-      id: 'guest',
-      label: 'guest_pd',
-      detail: guest
-        ? `os ${guest.os_type} / arch ${guest.arch} / state ${guest.state}`
-        : 'no selection',
-      x: 31,
-      y: 67,
-      kind: 'guest',
-    },
-    {
-      id: 'eventbus',
-      label: 'EventBus',
-      detail: 'state events',
-      x: 54,
-      y: 48,
-      kind: 'service',
-    },
-    {
-      id: 'log',
-      label: 'log_drain',
-      detail: 'console stream',
-      x: 78,
-      y: 48,
-      kind: 'service',
-    },
-    ...deviceTypes.map((devType, index) => ({
-      id: `dev-${devType}`,
-      label: `${(DEV_TYPE_NAME[devType] ?? `type-${devType}`).toLowerCase()}_pd`,
-      detail: deviceDetail(devType, devices),
-      x: 48 + index * 11,
-      y: 82,
-      kind: 'device' as NodeKind,
-      devType,
-    })),
-  ];
-
-  const edges: GraphEdge[] = [
-    { from: 'gui', to: 'cc', label: 'socket', active: recent.length > 0 },
-    { from: 'cc', to: 'vibe', label: 'lifecycle', active: hasRecent(SERVICE_OPS.vibe) },
-    { from: 'cc', to: 'agents', label: 'pool', active: hasRecent(SERVICE_OPS.agents) },
-    { from: 'cc', to: 'log', label: 'logs', active: hasRecent(SERVICE_OPS.logs) },
-    { from: 'cc', to: 'guest', label: 'input', active: hasRecent(SERVICE_OPS.guest) },
-    { from: 'cc', to: 'trace', label: 'trace', active: hasRecent(SERVICE_OPS.trace) || traceEvents.length > 0 },
-    { from: 'vibe', to: 'eventbus', label: 'events', active: hasRecent(SERVICE_OPS.vibe) },
-    { from: 'vibe', to: 'guest', label: 'compose', active: hasRecent(SERVICE_OPS.vibe) || hasTraceTo(12) },
-    ...deviceTypes.map(devType => ({
-      from: 'guest',
-      to: `dev-${devType}`,
-      label: 'virtio',
-      active: hasRecent(SERVICE_OPS.devices),
-    })),
-  ];
 
   return (
     <section className="rounded-lg border border-os-border bg-os-surface">
@@ -167,65 +26,28 @@ export function TopologyGraph({ guest, devices, sessions, traffic, traceEvents }
             Topology
           </h3>
         </div>
-        {guest && (
-          <span className="font-mono text-xs text-os-text">
-            0x{guest.guest_handle.toString(16).padStart(8, '0')}
-          </span>
-        )}
         <span className="ml-auto font-mono text-xs text-os-muted">
           {recent.length} recent messages
         </span>
       </div>
 
-      <div className="overflow-x-auto">
-        <div className="relative h-[24rem] min-w-[760px]">
-          {/* SVG holds only the lines; preserveAspectRatio="none" so they
-              stretch to match the percentage-positioned nodes.  Labels are
-              rendered as HTML below to keep glyph aspect ratio natural. */}
-          <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
-            {edges.map(edge => {
-              const from = nodes.find(n => n.id === edge.from);
-              const to = nodes.find(n => n.id === edge.to);
-              if (!from || !to) return null;
-              return (
-                <line
-                  key={`${edge.from}-${edge.to}`}
-                  x1={from.x}
-                  y1={from.y}
-                  x2={to.x}
-                  y2={to.y}
-                  stroke={edge.active ? 'rgba(45,212,191,.8)' : 'rgba(123,132,145,.32)'}
-                  strokeWidth={edge.active ? 0.5 : 0.3}
-                  vectorEffect="non-scaling-stroke"
-                />
-              );
-            })}
-          </svg>
+      <div className="flex items-start gap-2 border-b border-os-border bg-os-bg/60 px-4 py-2">
+        <Info aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 flex-none text-os-muted" />
+        <p className="font-mono text-[11px] leading-snug text-os-muted">
+          Boot-time record of what the root task granted to each protection domain, by
+          capability kind — not live kernel state. seL4 exposes no capability-enumeration
+          syscall, so this is a ledger of what root recorded granting, never a reading of
+          live kernel state, and it does not verify the subsetting invariant (the kernel
+          enforces that unconditionally and independently of this view).
+        </p>
+      </div>
 
-          {edges.map(edge => {
-            const from = nodes.find(n => n.id === edge.from);
-            const to = nodes.find(n => n.id === edge.to);
-            if (!from || !to) return null;
-            const midX = (from.x + to.x) / 2;
-            const midY = (from.y + to.y) / 2;
-            return (
-              <span
-                key={`label-${edge.from}-${edge.to}`}
-                className={`pointer-events-none absolute -translate-x-1/2 -translate-y-1/2
-                            rounded bg-os-surface/80 px-1 font-mono text-[10px] leading-none ${
-                              edge.active ? 'text-os-accent' : 'text-os-muted'
-                            }`}
-                style={{ left: `${midX}%`, top: `${midY}%` }}
-              >
-                {edge.label}
-              </span>
-            );
-          })}
-
-          {nodes.map(node => (
-            <GraphNodeView key={node.id} node={node} />
-          ))}
-        </div>
+      <div className="px-4 py-4">
+        {authority ? (
+          <AuthorityGrid snapshot={authority} />
+        ) : (
+          <AuthorityUnavailable reason={authorityError} />
+        )}
       </div>
 
       <div className="border-t border-os-border px-4 py-3">
@@ -289,62 +111,93 @@ export function TopologyGraph({ guest, devices, sessions, traffic, traceEvents }
   );
 }
 
-function selectedDeviceTypes(guest: GuestInfo | null, devices: DeviceInfo[]) {
-  const fromGuest = guest?.device_flags !== undefined
-    ? DEVICE_BITS.filter(devType => guest.device_flags! & (1 << devType))
-    : [];
-  if (fromGuest.length > 0) return fromGuest;
-
-  const available = Array.from(new Set(devices.map(device => device.dev_type)))
-    .filter(devType => DEVICE_BITS.includes(devType))
-    .sort((a, b) => a - b);
-  return available.length > 0
-    ? available
-    : [CC_DEV_TYPE_SERIAL, CC_DEV_TYPE_NET, CC_DEV_TYPE_BLOCK];
-}
-
-function deviceDetail(devType: number, devices: DeviceInfo[]) {
-  const matching = devices.filter(device => device.dev_type === devType);
-  if (matching.length === 0) return 'declared';
-  return `${matching.length} handle${matching.length === 1 ? '' : 's'}`;
-}
-
-function GraphNodeView({ node }: { node: GraphNode }) {
+function AuthorityGrid({ snapshot }: { snapshot: AuthoritySnapshot }) {
   return (
-    <div
-      className={`absolute w-36 -translate-x-1/2 -translate-y-1/2 rounded-lg border px-3 py-2 shadow-sm ${
-        node.kind === 'host'
-          ? 'border-sky-500/35 bg-sky-500/10'
-          : node.kind === 'relay'
-          ? 'border-os-accent/45 bg-os-accent/10'
-          : node.kind === 'guest'
-          ? 'border-violet-500/35 bg-violet-500/10'
-          : node.kind === 'device'
-          ? 'border-amber-500/35 bg-amber-500/10'
-          : 'border-os-border bg-os-bg'
-      }`}
-      style={{ left: `${node.x}%`, top: `${node.y}%` }}
-    >
-      <div className="mb-1 flex items-center gap-2">
-        <NodeIcon node={node} />
-        <p className="min-w-0 truncate font-mono text-xs font-semibold text-os-text" title={node.label}>
-          {node.label}
-        </p>
+    <div>
+      <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[11px] text-os-muted">
+        <span>{snapshot.pd_count} domain{snapshot.pd_count === 1 ? '' : 's'} recorded</span>
+        <span>{snapshot.total_recorded} grant{snapshot.total_recorded === 1 ? '' : 's'} recorded</span>
+        {snapshot.truncated_adds > 0 && (
+          <span className="text-amber-300">
+            {snapshot.truncated_adds} grant{snapshot.truncated_adds === 1 ? '' : 's'} dropped
+            — the domain table was full at boot
+          </span>
+        )}
+        {snapshot.saturated && (
+          <span className="text-amber-300">at least one count saturated at its recorded maximum</span>
+        )}
       </div>
-      <p className="truncate font-mono text-[11px] text-os-muted" title={node.detail}>
-        {node.detail}
-      </p>
+
+      {snapshot.rows.length === 0 ? (
+        <p className="font-mono text-xs text-os-muted">No protection domains recorded</p>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {snapshot.rows.map(row => (
+            <AuthorityCard key={row.pd_index} row={row} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-function NodeIcon({ node }: { node: GraphNode }) {
-  if (node.kind === 'device' && node.devType !== undefined) {
-    return <DeviceIcon devType={node.devType} className="h-3.5 w-3.5 flex-none text-amber-300" />;
-  }
-  if (node.kind === 'guest') return <Server aria-hidden="true" className="h-3.5 w-3.5 flex-none text-violet-300" />;
-  if (node.kind === 'relay') return <Radio aria-hidden="true" className="h-3.5 w-3.5 flex-none text-os-accent" />;
-  if (node.kind === 'host') return <Network aria-hidden="true" className="h-3.5 w-3.5 flex-none text-sky-300" />;
-  if (node.id === 'eventbus') return <Layers aria-hidden="true" className="h-3.5 w-3.5 flex-none text-os-muted" />;
-  return <Shield aria-hidden="true" className="h-3.5 w-3.5 flex-none text-os-muted" />;
+function AuthorityCard({ row }: { row: AuthorityRow }) {
+  const held = AUTHORITY_KIND_NAMES
+    .map((kind, i) => ({ kind, count: row.counts[i] ?? 0 }))
+    .filter(entry => entry.count > 0);
+  const label = row.is_root ? 'root task' : (row.name || '(unnamed)');
+
+  return (
+    <div
+      className={`rounded-lg border px-3 py-2 ${
+        row.is_root ? 'border-sky-500/35 bg-sky-500/10' : 'border-os-border bg-os-bg'
+      }`}
+    >
+      <div className="mb-1 flex items-center gap-2">
+        <Shield
+          aria-hidden="true"
+          className={`h-3.5 w-3.5 flex-none ${row.is_root ? 'text-sky-300' : 'text-os-muted'}`}
+        />
+        <p className="min-w-0 truncate font-mono text-xs font-semibold text-os-text" title={label}>
+          {label}
+        </p>
+      </div>
+      <p className="mb-2 font-mono text-[11px] text-os-muted">
+        {row.is_root ? 'pd_index 0xFFFFFFFF (root sentinel)' : `pd_index ${row.pd_index}`}
+      </p>
+      {held.length === 0 ? (
+        <p className="font-mono text-[11px] text-os-muted">no capability kinds recorded</p>
+      ) : (
+        <ul className="flex flex-wrap gap-1">
+          {held.map(entry => (
+            <li
+              key={entry.kind}
+              className="rounded bg-os-surface px-1.5 py-0.5 font-mono text-[10px] text-os-text"
+              title={`${entry.count} × ${entry.kind}`}
+            >
+              {entry.kind}×{entry.count}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function AuthorityUnavailable({ reason }: { reason: string | null }) {
+  return (
+    <div className="flex flex-col items-start gap-2 rounded border border-red-500/40 bg-red-500/10 px-3 py-3">
+      <p className="flex items-center gap-2 font-mono text-xs font-semibold text-red-300">
+        <AlertTriangle aria-hidden="true" className="h-3.5 w-3.5 flex-none" />
+        Authority data unavailable
+      </p>
+      <p className="font-mono text-xs text-red-200/90">
+        {reason ?? 'Not fetched yet.'}
+      </p>
+      <p className="font-mono text-[11px] text-os-muted">
+        No topology diagram is shown in its place. A drawn stand-in here would be exactly
+        the hardcoded picture this view used to show instead of real data.
+      </p>
+    </div>
+  );
 }

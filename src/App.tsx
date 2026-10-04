@@ -164,11 +164,10 @@ export default function App() {
                       onSendInput={sendInput}
                     />
                     <TopologyGraph
-                      guest={selectedGuest}
-                      devices={state.devices}
-                      sessions={state.sessions}
                       traffic={state.traffic}
                       traceEvents={state.traceEvents}
+                      authority={state.authority}
+                      authorityError={state.authorityError}
                     />
                   </div>
                 </div>
