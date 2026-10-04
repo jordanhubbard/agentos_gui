@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { notPermittedReason } from '../lib/ccErrors';
 import type {
+  AuthoritySnapshot,
   DeviceInfo,
   FaultInjectResult,
   GuestInfo,
@@ -32,7 +33,7 @@ import {
   DEV_TYPE_NAME,
   GUEST_STATE,
   OS_TYPE,
-  TRACE_PD_NAME,
+  tracePdLabel,
 } from '../types';
 
 interface Props {
@@ -52,6 +53,17 @@ interface Props {
   // relay the last time the background refresh tried it, if any. See
   // src/lib/ccErrors.ts.
   traceNotPermitted: string | null;
+  // Reason the last background trace fetch failed for any reason OTHER
+  // than an operator-envelope refusal (that's traceNotPermitted, above) --
+  // an ordinary transport/protocol fault. Null if trace hasn't been tried,
+  // was refused, or last succeeded. When set, traceStatus/traceEvents have
+  // already been cleared upstream (see useAgentOS.ts) rather than left
+  // showing a previous cycle's data with no indication it's stale.
+  traceError: string | null;
+  // The boot-time authority snapshot, used only to label trace from_pd/to_pd
+  // with the names MSG_CC_AUTHORITY actually recorded for them -- never an
+  // invented name. See `tracePdLabel` in src/types.ts.
+  authority: AuthoritySnapshot | null;
   onTraceStart: (flags: number) => Promise<TraceStatus>;
   onTraceStop: () => Promise<TraceStatus>;
   onTraceQuery: () => Promise<TraceStatus>;
@@ -78,6 +90,8 @@ export function ApiPanel({
   traceStatus,
   traceEvents,
   traceNotPermitted,
+  traceError,
+  authority,
   onTraceStart,
   onTraceStop,
   onTraceQuery,
@@ -109,6 +123,11 @@ export function ApiPanel({
   // fact about the connected cc_pd, not a policy this GUI decides.
   const [faultNotPermitted, setFaultNotPermitted] = useState<string | null>(null);
   const [traceRefused, setTraceRefused] = useState<string | null>(traceNotPermitted);
+  // Ordinary (non-refusal) background trace fetch failure -- see traceError
+  // prop doc. Unlike traceRefused, this does not disable the controls: it
+  // just says the last background refresh's trace data could not be
+  // trusted, so the table below is empty rather than showing stale data.
+  const [traceErr, setTraceErr] = useState<string | null>(traceError);
 
   const fbDevices = useMemo(
     () => devices.filter(d => d.dev_type === CC_DEV_TYPE_FB),
@@ -120,6 +139,7 @@ export function ApiPanel({
   useEffect(() => setTraceState(traceStatus), [traceStatus]);
   useEffect(() => setTraceRows(traceEvents), [traceEvents]);
   useEffect(() => setTraceRefused(traceNotPermitted), [traceNotPermitted]);
+  useEffect(() => setTraceErr(traceError), [traceError]);
   useEffect(() => {
     if (guests.length > 0 && !guests.some(g => g.guest_handle === guestHandle)) {
       setGuestHandle(guests[0].guest_handle);
@@ -366,6 +386,12 @@ export function ApiPanel({
               refused by the operator authority envelope: {traceRefused}
             </p>
           )}
+          {traceErr && (
+            <p className="mb-3 flex items-center gap-2 font-mono text-xs text-red-400">
+              <ShieldAlert aria-hidden="true" className="h-3.5 w-3.5 flex-none" />
+              last background trace fetch failed, data cleared rather than shown stale: {traceErr}
+            </p>
+          )}
           {traceState && (
             <div className="mb-3 grid grid-cols-3 gap-2 font-mono text-xs">
               <Metric label="events" value={String(traceState.event_count)} />
@@ -384,10 +410,10 @@ export function ApiPanel({
               >
                 <span className="text-os-muted">#{event.seq_lo}</span>
                 <span className="truncate text-os-text">
-                  {TRACE_PD_NAME[event.from_pd] ?? `pd${event.from_pd}`}
+                  {tracePdLabel(event.from_pd, authority)}
                 </span>
                 <span className="truncate text-os-text">
-                  {TRACE_PD_NAME[event.to_pd] ?? `pd${event.to_pd}`}
+                  {tracePdLabel(event.to_pd, authority)}
                 </span>
                 <span className="text-right text-os-muted">0x{event.opcode.toString(16)}</span>
               </div>

@@ -73,7 +73,14 @@ test.describe('CC API panel', () => {
     expect((starts.at(-1)!.args as any).flags).toBe(1);
     expect((dumps.at(-1)!.args as any).maxEvents).toBe(64);
     await expect(page.getByText('TraceRecorder')).toBeVisible();
-    await expect(page.getByText('linux_vmm')).toBeVisible();
+    // PD labels in the trace table come from the real MSG_CC_AUTHORITY
+    // snapshot (tests/helpers/tauri.ts's cc_authority mock has a row for
+    // pd_index 12 named 'vibe_engine'), never an invented table -- and for
+    // a pd_index the authority snapshot doesn't know about (41, from the
+    // cc_trace_dump mock), it falls back to "pd41" rather than guessing a
+    // name.
+    await expect(page.getByText('vibe_engine')).toBeVisible();
+    await expect(page.getByText('pd41', { exact: true })).toBeVisible();
   });
 
   test('Inject refused by the operator authority envelope disables the control with a reason', async ({ page }) => {

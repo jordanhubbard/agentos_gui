@@ -18,12 +18,23 @@ export interface AgentOSState {
   sessions:    SessionInfo[];
   sessionStatus: SessionStatus | null;
   traffic:     TrafficEvent[];
+  // null means trace hasn't been fetched yet, or the last fetch failed --
+  // see traceNotPermitted/traceError for which. A failed fetch clears these
+  // rather than leaving the previous cycle's data rendering as current (the
+  // authority snapshot below already got this right; trace did not, and
+  // the GUI showed stale trace data with no staleness marker on an ordinary
+  // transport failure).
   traceStatus: TraceStatus | null;
   traceEvents: TraceEntry[];
   // Reason cc_pd's operator authority envelope gave for refusing the trace
   // relay, if it has — null means either trace hasn't been tried yet or it
   // isn't refused. See src/lib/ccErrors.ts.
   traceNotPermitted: string | null;
+  // Reason the last trace fetch failed for any reason OTHER than an
+  // operator-envelope refusal (that case is traceNotPermitted, above) --
+  // e.g. an ordinary transport/protocol failure. Null if trace hasn't been
+  // tried yet, was refused (not this), or last succeeded.
+  traceError: string | null;
   // The boot-time authority snapshot (MSG_CC_AUTHORITY), or null if it has
   // not been fetched yet or the last fetch failed. See
   // src/components/TopologyGraph.tsx for why a failure must render an
@@ -53,6 +64,7 @@ export function useAgentOS() {
     traceStatus: null,
     traceEvents: [],
     traceNotPermitted: null,
+    traceError: null,
     authority: null,
     authorityError: null,
     logLines:   [],
@@ -128,6 +140,7 @@ export function useAgentOS() {
       traceStatus: null,
       traceEvents: [],
       traceNotPermitted: null,
+      traceError: null,
       authority: null,
       authorityError: null,
       logLines: [],
@@ -171,6 +184,16 @@ export function useAgentOS() {
         ('error' in traceDumpResult && traceDumpResult.error) ||
         null;
       const traceNotPermitted = traceFailure ? notPermittedReason(traceFailure) : null;
+      // Any trace failure other than an operator-envelope refusal (that's
+      // traceNotPermitted, handled elsewhere) -- an ordinary transport or
+      // protocol fault. Previously a failure here fell through silently:
+      // the reducer kept the previous cycle's traceStatus/traceEvents with
+      // no staleness marker, so ApiPanel and TopologyGraph kept rendering
+      // old trace data as if it were current. Now any failure clears both,
+      // same as the authority snapshot above.
+      const traceError = traceFailure && !traceNotPermitted
+        ? describeCcFailure(traceFailure)
+        : null;
 
       // The authority snapshot is read independently of everything above
       // for the same reason trace is: it must never take the rest of a
@@ -206,9 +229,10 @@ export function useAgentOS() {
         sessions,
         sessionStatus,
         traffic,
-        traceStatus: 'error' in traceStatusResult ? s.traceStatus : traceStatusResult,
-        traceEvents: 'error' in traceDumpResult ? s.traceEvents : traceDumpResult.events,
+        traceStatus: traceFailure ? null : (traceStatusResult as TraceStatus),
+        traceEvents: traceFailure ? [] : (traceDumpResult as TraceDumpResult).events,
         traceNotPermitted,
+        traceError,
         authority,
         authorityError,
         error: null,

@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { setupTauriMock, mockError, getCallsFor } from './helpers/tauri';
-import { connectApp } from './helpers/app';
+import { connectApp, switchTab } from './helpers/app';
 
 test.describe('Refresh', () => {
   test.beforeEach(async ({ page }) => {
@@ -81,5 +81,33 @@ test.describe('Refresh', () => {
     // And the refused trace call does not surface as a generic header error.
     await expect(page.getByText(/refused by the operator authority envelope/)).not.toBeVisible();
     await expect(page.getByText(/^error:/)).not.toBeVisible();
+  });
+
+  test('an ordinary trace transport failure does not render stale trace data as current', async ({ page }) => {
+    // Distinct from the NOT_PERMITTED case above: this is a plain transport
+    // failure (no "NOT_PERMITTED: " prefix), which useAgentOS used to
+    // swallow by keeping the previous cycle's traceStatus/traceEvents with
+    // no indication anything was wrong. The fix clears both on any trace
+    // failure and surfaces a reason instead of leaving old data rendering
+    // as if it were current.
+    await setupTauriMock(page, {
+      cc_trace_query: mockError('CC-PD socket connected, but cc_pd did not reply within 5s.'),
+      cc_trace_dump: mockError('CC-PD socket connected, but cc_pd did not reply within 5s.'),
+    });
+    await page.reload();
+    await connectApp(page);
+
+    // The rest of refresh is unaffected (same independence guarantee as
+    // the NOT_PERMITTED case).
+    await expect(page.getByText('Linux')).toBeVisible();
+    await expect(page.getByText(/^error:/)).not.toBeVisible();
+
+    await switchTab(page, 'API');
+    await expect(page.getByText(/last background trace fetch failed/)).toBeVisible();
+    await expect(page.getByText(/did not reply within 5s/)).toBeVisible();
+    // Not the refusal banner -- this is a different failure class.
+    await expect(page.getByText(/refused by the operator authority envelope/)).not.toBeVisible();
+    // No trace rows rendered as if they were current data.
+    await expect(page.getByText('No trace events')).toBeVisible();
   });
 });

@@ -19,7 +19,51 @@ on:
 
 jobs:
   test:
+    # npm/TypeScript/Playwright checks never need the agentOS source tree,
+    # so they run unconditionally -- including for fork PRs, which receive
+    # no secrets and would otherwise get no CI signal at all.
     runs-on: ubuntu-latest
+    steps:
+      - name: Check out agentos_gui
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: npm ci
+        run: npm ci
+
+      - name: npm run check (tsc --noEmit)
+        run: npm run check
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Playwright suite
+        run: npm run test
+
+  drift-guard:
+    # Requires a second checkout of jordanhubbard/agentos (a *different*
+    # repository from this one) so the Rust drift guard
+    # (cc_ipc.rs::drift_guard_against_agentos_source) can diff this repo's
+    # re-declared protocol constants against the real headers. The default
+    # GITHUB_TOKEN is scoped to this repository only, so that checkout needs
+    # a PAT with read access to agentos -- configure it as the
+    # AGENTOS_RO_PAT repository secret. Without it, this job's checkout step
+    # fails outright (a 404, not a silent skip): AGENTOS_DRIFT_GUARD_REQUIRED
+    # below is only read *after* a successful checkout, so a missing/invalid
+    # secret fails this job loudly instead of reporting green.
+    #
+    # Forks never receive repository secrets regardless, so this job is
+    # skipped for fork PRs rather than failing on every one of them for a
+    # reason external contributors cannot fix. It still runs for same-repo
+    # pushes and PRs.
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - name: Check out agentos_gui
         uses: actions/checkout@v4
@@ -31,13 +75,7 @@ jobs:
         with:
           repository: jordanhubbard/agentos
           path: agentos
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: agentos_gui/package-lock.json
+          token: ${{ secrets.AGENTOS_RO_PAT }}
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -55,22 +93,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
-
-      - name: npm ci
-        working-directory: agentos_gui
-        run: npm ci
-
-      - name: npm run check (tsc --noEmit)
-        working-directory: agentos_gui
-        run: npm run check
-
-      - name: Install Playwright browsers
-        working-directory: agentos_gui
-        run: npx playwright install --with-deps chromium
-
-      - name: Playwright suite
-        working-directory: agentos_gui
-        run: npm run test
 
       - name: cargo test (including the agentOS drift guard, required)
         working-directory: agentos_gui/src-tauri

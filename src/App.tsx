@@ -202,6 +202,8 @@ export default function App() {
               traceStatus={state.traceStatus}
               traceEvents={state.traceEvents}
               traceNotPermitted={state.traceNotPermitted}
+              traceError={state.traceError}
+              authority={state.authority}
               onTraceStart={traceStart}
               onTraceStop={traceStop}
               onTraceQuery={traceQuery}

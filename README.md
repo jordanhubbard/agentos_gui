@@ -79,8 +79,15 @@ Reply:    `mr[4](16) + shmem(4096)` = 4112 bytes
 See `src-tauri/src/cc_ipc.rs` and `cc_contract.h` in the agentOS repo.
 
 The Tauri bridge records a bounded in-memory traffic ring for every CC-PD
-request and reply. The Guests view renders that hook as a live topology and
-message traffic inspector so protocol failures are visible during OS bring-up.
+request and reply. The Guests view renders that ring as a message traffic
+inspector, and separately renders the boot-time authority snapshot
+(`MSG_CC_AUTHORITY`) as a ledger of what the root task recorded granting to
+each protection domain at boot — a record, not live kernel state. seL4
+exposes no capability-enumeration syscall, so there is no "live topology" to
+render; the in-app label says so explicitly. See "Keeping the re-declared
+constants honest" below and `src/components/TopologyGraph.tsx` for why a
+failure to fetch either of these renders an explicit unavailable state
+rather than falling back to a drawn diagram.
 
 ## Keeping the re-declared constants honest
 
@@ -156,17 +163,40 @@ without the agentOS tree cloned should not be blocked by this test.
 
 ### CI
 
-`.github/workflows/ci.yml` checks out this repo and `jordanhubbard/agentos` as siblings
-(`actions/checkout` with `path: agentos_gui` / `path: agentos`), then runs `npm ci`,
-`npm run check`, the Playwright suite, and `cargo test` under `src-tauri/` with
-`AGENTOS_SRC=$GITHUB_WORKSPACE/agentos` and `AGENTOS_DRIFT_GUARD_REQUIRED=1`. Because the
-checkout step guarantees the tree is present, a skip in that job means the checkout itself
-broke, not that the tree is legitimately absent — so the required flag turns that into a
-build failure instead of a silently green run.
+`.github/workflows/ci.yml` has two jobs:
+
+- **`test`** — checks out only this repo, then runs `npm ci`, `npm run check`, and the
+  Playwright suite. It needs no agentOS checkout and no secrets, so it runs for every push
+  and every PR, including fork PRs.
+- **`drift-guard`** — checks out this repo and `jordanhubbard/agentos` as siblings
+  (`actions/checkout` with `path: agentos_gui` / `path: agentos`), then runs `cargo test`
+  under `src-tauri/` with `AGENTOS_SRC=$GITHUB_WORKSPACE/agentos` and
+  `AGENTOS_DRIFT_GUARD_REQUIRED=1`. Because the checkout step guarantees the tree is
+  present, a skip in that job means the checkout itself broke, not that the tree is
+  legitimately absent — so the required flag turns that into a build failure instead of a
+  silently green run.
 
 It deliberately does **not** attempt to build or boot agentOS: that needs the qualified seL4
 SDK and a QEMU/hardware target, well outside what a GUI's CI should require. It reads only
 agentOS's *source headers* off disk for the drift guard — no agentOS build step runs.
+
+**Required secret: `AGENTOS_RO_PAT`.** `jordanhubbard/agentos` is a separate, private
+repository from this one. The default `GITHUB_TOKEN` is scoped to the repository the
+workflow runs in, so it cannot check out `agentos` — that checkout step needs a
+fine-grained personal access token with read access to `jordanhubbard/agentos`, configured
+as the `AGENTOS_RO_PAT` repository secret. **If it is not configured** (or is invalid), the
+"Check out agentOS" step in the `drift-guard` job fails outright — a 404 checking out the
+repository, not a silent skip — because `AGENTOS_DRIFT_GUARD_REQUIRED=1` is only read after
+that checkout succeeds. A misconfigured secret therefore fails the `drift-guard` job loudly
+instead of reporting green; it does not affect the `test` job.
+
+**Fork PRs never run `drift-guard`.** Forks receive no repository secrets regardless of how
+`AGENTOS_RO_PAT` is configured, so the job is gated with
+`if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository`
+and simply does not run for them — it still runs for same-repo pushes and PRs. Fork
+contributors still get full signal from the `test` job (type-check + Playwright); only the
+agentOS-constants drift check is unavailable to them, which is unavoidable without handing
+forks a credential.
 
 **What this CI does not cover:** anything that requires a live `cc_pd` to observe, such as a
 refused call inside a `Promise.all` silently breaking an unrelated UI panel (the GUI's
