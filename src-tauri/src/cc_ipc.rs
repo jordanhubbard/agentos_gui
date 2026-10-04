@@ -6,6 +6,20 @@
 //!
 //! Transport: Unix domain socket at CC_PD_SOCK (default: build/cc_pd.sock)
 //! All MSG_CC_* constants mirror agentos.h exactly.
+//!
+//! Connection bootstrap (cc_contract.h, "Binary socket bootstrap"):
+//! `cc_pd` sends an unprompted 4112-byte greeting the instant the socket is
+//! open (magic + version + a 64-bit generation that increments every time
+//! the transport resets). The client must reply with a single
+//! `MSG_CC_CONNECTION_SYNC` request before sending anything else, echoing
+//! the version and generation it was just sent and carrying the operator
+//! credential in the first `CC_OPERATOR_TOKEN_BYTES` of shmem (the rest
+//! zero). Only after `cc_pd` replies `CC_OK` is the connection active and
+//! `MSG_CC_CONNECT` (session establishment) or any sessionless opcode
+//! (`MSG_CC_INSPECT`, `MSG_CC_AUTHORITY`, `MSG_CC_OPERATOR_*`) permitted.
+//! A version, generation, credential, or reserved-byte mismatch makes
+//! `cc_pd` close the connection *without replying* — the client observes
+//! EOF or a read timeout, not an error opcode.
 
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -39,6 +53,18 @@ pub const MSG_CC_TRACE_START: u32 = 0x2616;
 pub const MSG_CC_TRACE_STOP: u32 = 0x2617;
 pub const MSG_CC_TRACE_QUERY: u32 = 0x2618;
 pub const MSG_CC_TRACE_DUMP: u32 = 0x2619;
+pub const MSG_CC_CONNECTION_SYNC: u32 = 0x261F;
+
+// ── Connection bootstrap constants (cc_contract.h) ───────────────────────────
+// Source of truth in the agentOS tree: kernel/agentos-root-task/include/
+// contracts/cc_contract.h (magic/version/CC_OK) and
+// kernel/agentos-root-task/include/cc_operator_credential.h (token length
+// and the well-known development value). This repo re-declares them by
+// design — see README.md — and does NOT build against that tree.
+pub const CC_CONNECTION_MAGIC: u32 = 0x4343_5244;
+pub const CC_CONNECTION_VERSION: u32 = 1;
+pub const CC_OK: u32 = 0;
+pub const CC_OPERATOR_TOKEN_BYTES: usize = 32;
 
 // ── Device type constants (CC_DEV_TYPE_*) ────────────────────────────────────
 pub const CC_DEV_TYPE_SERIAL: u32 = 0;
@@ -62,9 +88,18 @@ pub const CC_SESSION_STATE_EXPIRED: u32 = 3;
 const CC_SHMEM_SIZE: usize = 4096;
 const CC_REQ_SIZE: usize = 4 + 12 + CC_SHMEM_SIZE; // 4112
 const CC_REPLY_SIZE: usize = 16 + CC_SHMEM_SIZE; // 4112
+const CC_GREETING_SIZE: usize = CC_REPLY_SIZE; // same wire shape as a reply: mr[4] + shmem
 const CC_IO_TIMEOUT: Duration = Duration::from_secs(5);
 const CC_TRAFFIC_MAX: usize = 512;
 const CC_TRACE_ENTRY_SIZE: usize = 16;
+
+/// Well-known development operator credential, hex-encoded (32 bytes / 64
+/// hex chars). NOT a secret — see cc_operator_credential.h: agentOS treats
+/// the local operator as untrusted and assumes they can read it. It selects
+/// an authority envelope; it does not authenticate anyone. ASCII decode:
+/// "agentOS-dev-operator-token-v1" + 3 trailing zero bytes.
+const CC_DEV_OPERATOR_TOKEN_HEX: &str =
+    "6167656e744f532d6465762d6f70657261746f722d746f6b656e2d7631000000";
 
 // ── Serde types for Tauri ─────────────────────────────────────────────────────
 
@@ -219,6 +254,20 @@ pub struct TrafficEvent {
     pub duration_ms: u64,
 }
 
+// ── Connection bootstrap ──────────────────────────────────────────────────────
+
+/// The unprompted 4112-byte greeting `cc_pd` sends the instant the socket
+/// opens. `generation` is a 64-bit counter that increments every time the
+/// transport resets — it is NOT stable across reconnects and must always be
+/// echoed back from a freshly-read greeting, never hardcoded or cached.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConnectionGreeting {
+    pub magic: u32,
+    pub version: u32,
+    pub generation_lo: u32,
+    pub generation_hi: u32,
+}
+
 // ── IPC client ────────────────────────────────────────────────────────────────
 
 pub struct CcClient {
@@ -230,9 +279,22 @@ pub struct CcClient {
 
 impl CcClient {
     pub fn connect(sock_path: &str) -> io::Result<Self> {
-        let stream = UnixStream::connect(sock_path)?;
+        let mut stream = UnixStream::connect(sock_path)?;
         stream.set_read_timeout(Some(CC_IO_TIMEOUT))?;
         stream.set_write_timeout(Some(CC_IO_TIMEOUT))?;
+
+        // Credential source is resolved before we touch the wire: a
+        // malformed override must fail loudly, not silently fall back and
+        // produce a confusing closed connection later.
+        let credential = operator_credential()?;
+
+        // 1. cc_pd speaks first: read its greeting before sending anything.
+        let greeting = Self::read_greeting(&mut stream)?;
+
+        // 2. Reply with CONNECTION_SYNC, echoing the version and generation
+        //    cc_pd just sent (never hardcoded) and carrying the credential.
+        Self::send_sync(&mut stream, &greeting, &credential)?;
+
         let mut client = CcClient {
             stream,
             session_id: 0,
@@ -240,7 +302,10 @@ impl CcClient {
             next_traffic_seq: 0,
         };
 
-        // MSG_CC_CONNECT — establish session
+        // 3. Only now is the connection active. MSG_CC_CONNECT establishes a
+        //    session for the session-based opcodes this client uses
+        //    (SEND/RECV/STATUS/...); sessionless opcodes (INSPECT,
+        //    OPERATOR_*, AUTHORITY) would not need this step.
         let reply = client.send_recv(MSG_CC_CONNECT, 0xA6E70002, 0, 0, &[])?;
         let ok = u32::from_le_bytes(reply[0..4].try_into().unwrap());
         if ok != 0 {
@@ -251,6 +316,118 @@ impl CcClient {
         }
         client.session_id = u32::from_le_bytes(reply[4..8].try_into().unwrap());
         Ok(client)
+    }
+
+    /// Read the 4112-byte greeting `cc_pd` sends unprompted on connect.
+    fn read_greeting(stream: &mut UnixStream) -> io::Result<ConnectionGreeting> {
+        let mut buf = [0u8; CC_GREETING_SIZE];
+        stream.read_exact(&mut buf).map_err(|err| {
+            Self::bootstrap_io_error(err, "reading the cc_pd greeting")
+        })?;
+        let greeting = ConnectionGreeting {
+            magic: u32::from_le_bytes(buf[0..4].try_into().unwrap()),
+            version: u32::from_le_bytes(buf[4..8].try_into().unwrap()),
+            generation_lo: u32::from_le_bytes(buf[8..12].try_into().unwrap()),
+            generation_hi: u32::from_le_bytes(buf[12..16].try_into().unwrap()),
+        };
+        if greeting.magic != CC_CONNECTION_MAGIC {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "unexpected greeting magic {:#010x} (expected {:#010x}); \
+                     this does not look like a cc_pd control socket",
+                    greeting.magic, CC_CONNECTION_MAGIC
+                ),
+            ));
+        }
+        Ok(greeting)
+    }
+
+    /// Build the `MSG_CC_CONNECTION_SYNC` request frame: version and
+    /// generation echoed verbatim from `greeting`, credential in
+    /// `shmem[0..CC_OPERATOR_TOKEN_BYTES]`, every remaining shmem byte zero.
+    fn build_sync_frame(
+        greeting: &ConnectionGreeting,
+        credential: &[u8; CC_OPERATOR_TOKEN_BYTES],
+    ) -> [u8; CC_REQ_SIZE] {
+        let mut req = [0u8; CC_REQ_SIZE];
+        req[0..4].copy_from_slice(&MSG_CC_CONNECTION_SYNC.to_le_bytes());
+        req[4..8].copy_from_slice(&greeting.version.to_le_bytes());
+        req[8..12].copy_from_slice(&greeting.generation_lo.to_le_bytes());
+        req[12..16].copy_from_slice(&greeting.generation_hi.to_le_bytes());
+        req[16..16 + CC_OPERATOR_TOKEN_BYTES].copy_from_slice(credential);
+        // req[16 + CC_OPERATOR_TOKEN_BYTES ..] stays zero-initialized (reserved).
+        req
+    }
+
+    /// Send CONNECTION_SYNC and wait for CC_OK. A version, generation,
+    /// credential, or reserved-byte mismatch makes cc_pd close the
+    /// connection without replying — the read below will see EOF or time
+    /// out, which `bootstrap_io_error` turns into an actionable message.
+    fn send_sync(
+        stream: &mut UnixStream,
+        greeting: &ConnectionGreeting,
+        credential: &[u8; CC_OPERATOR_TOKEN_BYTES],
+    ) -> io::Result<()> {
+        let req = Self::build_sync_frame(greeting, credential);
+        stream
+            .write_all(&req)
+            .map_err(|err| Self::bootstrap_io_error(err, "sending CONNECTION_SYNC"))?;
+
+        let mut reply = [0u8; CC_REPLY_SIZE];
+        stream.read_exact(&mut reply).map_err(|err| {
+            Self::bootstrap_io_error(err, "waiting for the CONNECTION_SYNC reply")
+        })?;
+
+        let ok = u32::from_le_bytes(reply[0..4].try_into().unwrap());
+        let version = u32::from_le_bytes(reply[4..8].try_into().unwrap());
+        let gen_lo = u32::from_le_bytes(reply[8..12].try_into().unwrap());
+        let gen_hi = u32::from_le_bytes(reply[12..16].try_into().unwrap());
+        if ok != CC_OK
+            || version != greeting.version
+            || gen_lo != greeting.generation_lo
+            || gen_hi != greeting.generation_hi
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionRefused,
+                "cc_pd replied to CONNECTION_SYNC but did not confirm: \
+                 credential rejected or protocol version mismatch.",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Map an I/O error seen during the bootstrap handshake to an
+    /// actionable message. Per cc_contract.h, any mismatch in version,
+    /// generation, credential, or reserved bytes makes cc_pd close the
+    /// connection *without replying* — the client sees EOF or a read
+    /// timeout, never a distinct error opcode. Surface that distinctly from
+    /// an ordinary I/O failure so the user knows which knob to turn.
+    fn bootstrap_io_error(err: io::Error, while_doing: &str) -> io::Error {
+        match err.kind() {
+            io::ErrorKind::UnexpectedEof
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::BrokenPipe => io::Error::new(
+                err.kind(),
+                format!(
+                    "cc_pd closed the connection while {while_doing}: \
+                     credential rejected or protocol version mismatch. \
+                     Check AGENTOS_CC_OPERATOR_TOKEN_HEX and that this \
+                     client's CC_CONNECTION_VERSION matches the running cc_pd."
+                ),
+            ),
+            io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock => io::Error::new(
+                err.kind(),
+                format!(
+                    "cc_pd did not respond while {while_doing} (timed out): \
+                     credential rejected or protocol version mismatch. \
+                     Check AGENTOS_CC_OPERATOR_TOKEN_HEX and that this \
+                     client's CC_CONNECTION_VERSION matches the running cc_pd."
+                ),
+            ),
+            _ => err,
+        }
     }
 
     pub fn disconnect(&mut self) -> io::Result<()> {
@@ -821,6 +998,67 @@ impl CcClient {
     }
 }
 
+// ── Operator credential ───────────────────────────────────────────────────────
+//
+// Source of truth: kernel/agentos-root-task/include/cc_operator_credential.h
+// in the agentOS tree. Re-declared here by design (see README.md) — this
+// repo does not build against that tree, so the value below is a literal
+// copy, not an include.
+//
+// The credential is NOT a secret and must never be described as
+// authentication: agentOS's threat model treats the local operator as
+// untrusted and assumes they can read it. It only selects which authority
+// envelope a connection receives.
+
+/// Resolve the operator credential: `AGENTOS_CC_OPERATOR_TOKEN_HEX` (64 hex
+/// characters) if set, else the well-known development token. A malformed
+/// override fails loudly — it is never silently replaced by the development
+/// token, because that would turn a typo into a confusing closed connection
+/// instead of a clear configuration error.
+fn operator_credential() -> io::Result<[u8; CC_OPERATOR_TOKEN_BYTES]> {
+    match std::env::var("AGENTOS_CC_OPERATOR_TOKEN_HEX") {
+        Ok(hex) => parse_credential_hex(&hex).map_err(|reason| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "AGENTOS_CC_OPERATOR_TOKEN_HEX is set but invalid ({reason}). \
+                     Expected exactly {} hex characters (32 bytes). Refusing to \
+                     silently fall back to the development token.",
+                    CC_OPERATOR_TOKEN_BYTES * 2
+                ),
+            )
+        }),
+        Err(std::env::VarError::NotPresent) => Ok(dev_operator_credential()),
+        Err(std::env::VarError::NotUnicode(_)) => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "AGENTOS_CC_OPERATOR_TOKEN_HEX is set but is not valid UTF-8.",
+        )),
+    }
+}
+
+fn parse_credential_hex(hex: &str) -> Result<[u8; CC_OPERATOR_TOKEN_BYTES], String> {
+    let hex = hex.trim();
+    if hex.len() != CC_OPERATOR_TOKEN_BYTES * 2 {
+        return Err(format!(
+            "expected {} hex characters, got {}",
+            CC_OPERATOR_TOKEN_BYTES * 2,
+            hex.len()
+        ));
+    }
+    let mut out = [0u8; CC_OPERATOR_TOKEN_BYTES];
+    for (i, byte) in out.iter_mut().enumerate() {
+        let chunk = hex.get(i * 2..i * 2 + 2).ok_or("truncated hex string")?;
+        *byte = u8::from_str_radix(chunk, 16)
+            .map_err(|_| format!("non-hex characters at position {}", i * 2))?;
+    }
+    Ok(out)
+}
+
+fn dev_operator_credential() -> [u8; CC_OPERATOR_TOKEN_BYTES] {
+    parse_credential_hex(CC_DEV_OPERATOR_TOKEN_HEX)
+        .expect("CC_DEV_OPERATOR_TOKEN_HEX constant must be valid hex")
+}
+
 fn opcode_name(opcode: u32) -> &'static str {
     match opcode {
         MSG_CC_CONNECT => "CONNECT",
@@ -903,4 +1141,113 @@ fn now_ms() -> u64 {
 
 fn millis_since(start: Instant) -> u64 {
     start.elapsed().as_millis().min(u64::MAX as u128) as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Step 1 of task-1-brief.md: build a sync frame from a synthetic
+    /// greeting and assert opcode, echoed version/generation, credential
+    /// placement, and zeroed reserved bytes. The generation here (an
+    /// arbitrary, non-hardcoded-looking pair) stands in for "whatever cc_pd
+    /// happened to send" — the whole point is that CcClient must echo it,
+    /// not assume any particular value.
+    #[test]
+    fn sync_frame_echoes_greeting_and_carries_credential() {
+        let greeting = ConnectionGreeting {
+            magic: CC_CONNECTION_MAGIC,
+            version: 7,
+            generation_lo: 0xDEAD_BEEF,
+            generation_hi: 0x1357_9BDF,
+        };
+        let credential = [0xABu8; CC_OPERATOR_TOKEN_BYTES];
+
+        let frame = CcClient::build_sync_frame(&greeting, &credential);
+
+        assert_eq!(frame.len(), CC_REQ_SIZE);
+
+        let opcode = u32::from_le_bytes(frame[0..4].try_into().unwrap());
+        assert_eq!(opcode, MSG_CC_CONNECTION_SYNC);
+        assert_eq!(opcode, 0x261F);
+
+        let version = u32::from_le_bytes(frame[4..8].try_into().unwrap());
+        assert_eq!(version, greeting.version, "must echo the greeting's version");
+
+        let gen_lo = u32::from_le_bytes(frame[8..12].try_into().unwrap());
+        let gen_hi = u32::from_le_bytes(frame[12..16].try_into().unwrap());
+        assert_eq!(
+            gen_lo, greeting.generation_lo,
+            "must echo the greeting's generation low word, never hardcode it"
+        );
+        assert_eq!(
+            gen_hi, greeting.generation_hi,
+            "must echo the greeting's generation high word, never hardcode it"
+        );
+
+        assert_eq!(
+            &frame[16..16 + CC_OPERATOR_TOKEN_BYTES],
+            &credential[..],
+            "credential must occupy shmem[0..32]"
+        );
+        assert!(
+            frame[16 + CC_OPERATOR_TOKEN_BYTES..]
+                .iter()
+                .all(|&b| b == 0),
+            "every reserved shmem byte beyond the credential must be zero"
+        );
+    }
+
+    /// A different synthetic generation must produce a different frame —
+    /// guards against a hardcoded generation that "happens" to match a
+    /// freshly-booted PD and only breaks after a reconnect.
+    #[test]
+    fn sync_frame_tracks_generation_changes_across_reconnects() {
+        let credential = [0x11u8; CC_OPERATOR_TOKEN_BYTES];
+
+        let first = ConnectionGreeting {
+            magic: CC_CONNECTION_MAGIC,
+            version: CC_CONNECTION_VERSION,
+            generation_lo: 1,
+            generation_hi: 0,
+        };
+        let second = ConnectionGreeting {
+            magic: CC_CONNECTION_MAGIC,
+            version: CC_CONNECTION_VERSION,
+            generation_lo: 2,
+            generation_hi: 0,
+        };
+
+        let frame_first = CcClient::build_sync_frame(&first, &credential);
+        let frame_second = CcClient::build_sync_frame(&second, &credential);
+
+        assert_ne!(
+            &frame_first[8..16],
+            &frame_second[8..16],
+            "generation words must track the greeting, not a cached/hardcoded value"
+        );
+    }
+
+    #[test]
+    fn dev_credential_is_well_formed() {
+        let cred = dev_operator_credential();
+        assert_eq!(cred.len(), CC_OPERATOR_TOKEN_BYTES);
+    }
+
+    #[test]
+    fn credential_hex_round_trips() {
+        let hex = "11".repeat(CC_OPERATOR_TOKEN_BYTES);
+        let cred = parse_credential_hex(&hex).expect("valid hex must parse");
+        assert_eq!(cred, [0x11u8; CC_OPERATOR_TOKEN_BYTES]);
+    }
+
+    #[test]
+    fn malformed_credential_hex_is_rejected_not_silently_defaulted() {
+        assert!(parse_credential_hex("not-hex-at-all-not-hex-at-all-not-hex-at-all-xx").is_err());
+        assert!(parse_credential_hex("ab").is_err(), "too short must fail");
+        assert!(
+            parse_credential_hex(&"11".repeat(CC_OPERATOR_TOKEN_BYTES + 1)).is_err(),
+            "too long must fail"
+        );
+    }
 }
