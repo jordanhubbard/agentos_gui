@@ -75,6 +75,81 @@ fn sibling_agentos_sock(path: &Path) -> Option<String> {
     None
 }
 
+/// Every socket path this backend would legitimately arrive at on its own:
+/// the `CC_PD_SOCK` override, the sibling-repo default (resolved from both
+/// the working directory and the executable location), the local
+/// `build/cc_pd.sock`, and the well-known `$HOME/Src/agentos` layout. This
+/// mirrors every branch `default_sock_path()` can take, not just the first
+/// one that matches.
+fn allowed_sock_paths() -> Vec<String> {
+    let mut allowed = Vec::new();
+
+    if let Ok(path) = std::env::var("CC_PD_SOCK") {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            allowed.push(trimmed.to_string());
+        }
+    }
+
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Some(path) = sibling_agentos_sock(&cwd) {
+            allowed.push(path);
+        }
+        allowed.push(cwd.join("build/cc_pd.sock").to_string_lossy().into_owned());
+    }
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(path) = sibling_agentos_sock(&exe) {
+            allowed.push(path);
+        }
+    }
+
+    if let Some(home) = std::env::var_os("HOME") {
+        allowed.push(
+            Path::new(&home)
+                .join("Src/agentos/build/cc_pd.sock")
+                .to_string_lossy()
+                .into_owned(),
+        );
+    }
+
+    allowed.push("build/cc_pd.sock".to_string());
+    allowed
+}
+
+/// Validate a socket path handed in from the frontend against the set of
+/// paths this backend resolved itself.
+///
+/// `cc_connect` is reachable by any script running in the webview, not just
+/// the operator's own clicks in `ConnectDialog`. Without this check it would
+/// happily open a connection — and run the connection handshake, including
+/// sending the operator credential — against whatever Unix socket path a
+/// script supplied. Restricting accepted paths to ones this process already
+/// resolved (or is currently using) means the frontend can select among
+/// legitimate agentOS socket locations but cannot redirect the backend to an
+/// arbitrary socket elsewhere on the machine.
+fn validate_sock_path(path: &str, state: &AppState) -> Result<String, String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("socket path must not be empty".to_string());
+    }
+
+    let current_default = state
+        .sock_path
+        .lock()
+        .map_err(|_| "socket path lock poisoned".to_string())?
+        .clone();
+
+    if trimmed == current_default || allowed_sock_paths().iter().any(|p| p == trimmed) {
+        return Ok(trimmed.to_string());
+    }
+
+    Err(format!(
+        "socket path {trimmed:?} is not a recognized agentOS control-plane socket location \
+         (expected the CC_PD_SOCK value, the sibling agentos build directory, or the resolved default)"
+    ))
+}
+
 fn env_flag_enabled(name: &str) -> bool {
     match std::env::var(name) {
         Ok(value) => {
@@ -89,6 +164,8 @@ fn env_flag_enabled(name: &str) -> bool {
 
 #[tauri::command]
 pub async fn cc_connect(path: String, state: State<'_, AppState>) -> Result<String, String> {
+    let validated_path = validate_sock_path(&path, &state)?;
+
     let client = state.client.clone();
     let sock_path = state.sock_path.clone();
 
@@ -101,10 +178,10 @@ pub async fn cc_connect(path: String, state: State<'_, AppState>) -> Result<Stri
         }
         *guard = None;
 
-        let new_client = CcClient::connect(&path).map_err(|e| e.to_string())?;
+        let new_client = CcClient::connect(&validated_path).map_err(|e| e.to_string())?;
         *sock_path
             .lock()
-            .map_err(|_| "socket path lock poisoned".to_string())? = path;
+            .map_err(|_| "socket path lock poisoned".to_string())? = validated_path;
         *guard = Some(new_client);
         Ok("connected".into())
     })
@@ -482,4 +559,49 @@ where
     tauri::async_runtime::spawn_blocking(f)
         .await
         .map_err(|e| format!("blocking command failed: {e}"))?
+}
+
+#[cfg(test)]
+mod sock_path_tests {
+    use super::*;
+
+    fn state_with_default(path: &str) -> AppState {
+        AppState {
+            client: Arc::new(Mutex::new(None)),
+            sock_path: Arc::new(Mutex::new(path.to_string())),
+        }
+    }
+
+    #[test]
+    fn accepts_the_current_resolved_default() {
+        let state = state_with_default("build/cc_pd.sock");
+        assert_eq!(
+            validate_sock_path("build/cc_pd.sock", &state).unwrap(),
+            "build/cc_pd.sock"
+        );
+    }
+
+    #[test]
+    fn accepts_the_cc_pd_sock_env_override() {
+        std::env::set_var("CC_PD_SOCK", "/tmp/agentos-test/cc_pd.sock");
+        let state = state_with_default("build/cc_pd.sock");
+        let result = validate_sock_path("/tmp/agentos-test/cc_pd.sock", &state);
+        std::env::remove_var("CC_PD_SOCK");
+        assert_eq!(result.unwrap(), "/tmp/agentos-test/cc_pd.sock");
+    }
+
+    #[test]
+    fn rejects_an_arbitrary_unix_socket_path() {
+        std::env::remove_var("CC_PD_SOCK");
+        let state = state_with_default("build/cc_pd.sock");
+        let err = validate_sock_path("/etc/some/other/service.sock", &state).unwrap_err();
+        assert!(err.contains("not a recognized"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn rejects_an_empty_path() {
+        let state = state_with_default("build/cc_pd.sock");
+        let err = validate_sock_path("   ", &state).unwrap_err();
+        assert!(err.contains("must not be empty"), "unexpected error: {err}");
+    }
 }

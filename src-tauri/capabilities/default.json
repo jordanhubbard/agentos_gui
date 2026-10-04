@@ -1,9 +1,36 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capabilities for agentOS GUI",
+  "description": "Default capabilities for agentOS GUI — grants only the cc_* commands the UI actually invokes (see src/hooks/useAgentOS.ts). core:default is intentionally not granted.",
   "windows": ["main"],
   "permissions": [
-    "core:default"
+    "allow-cc-connect",
+    "allow-cc-disconnect",
+    "allow-cc-list-sessions",
+    "allow-cc-session-status",
+    "allow-cc-session-send",
+    "allow-cc-session-recv",
+    "allow-cc-traffic-events",
+    "allow-cc-list-guests",
+    "allow-cc-guest-status",
+    "allow-cc-snapshot",
+    "allow-cc-restore",
+    "allow-cc-create-guest",
+    "allow-cc-suspend-guest",
+    "allow-cc-resume-guest",
+    "allow-cc-destroy-guest",
+    "allow-cc-list-devices",
+    "allow-cc-list-polecats",
+    "allow-cc-log-stream",
+    "allow-cc-send-input",
+    "allow-cc-get-sock-path",
+    "allow-cc-should-autoconnect",
+    "allow-cc-device-status",
+    "allow-cc-attach-framebuffer",
+    "allow-cc-fault-inject",
+    "allow-cc-trace-start",
+    "allow-cc-trace-stop",
+    "allow-cc-trace-query",
+    "allow-cc-trace-dump"
   ]
 }
