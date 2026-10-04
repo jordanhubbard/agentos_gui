@@ -1,0 +1,87 @@
+name: CI
+
+# Modest by design: this is a desktop GUI, not an OS gate. We do NOT build or
+# boot agentOS here -- that needs the qualified seL4 SDK and a QEMU/hardware
+# target, which is out of scope for this repo's CI. We only need agentOS's
+# *source headers* on disk so the drift guard (src-tauri/src/cc_ipc.rs) can
+# read the authoritative protocol constants out of them and compare against
+# this repo's re-declared copies.
+#
+# What this job does NOT catch: anything that requires a live cc_pd to
+# observe (e.g. a refused call breaking an unrelated UI panel). That needs a
+# separate job that boots agentOS and exercises the GUI against a real
+# socket -- tracked as a follow-up, not attempted here.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out agentos_gui
+        uses: actions/checkout@v4
+        with:
+          path: agentos_gui
+
+      - name: Check out agentOS (sibling, headers only)
+        uses: actions/checkout@v4
+        with:
+          repository: jordanhubbard/agentos
+          path: agentos
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: agentos_gui/package-lock.json
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            agentos_gui/src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('agentos_gui/src-tauri/Cargo.lock') }}
+
+      - name: Install Tauri Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: npm ci
+        working-directory: agentos_gui
+        run: npm ci
+
+      - name: npm run check (tsc --noEmit)
+        working-directory: agentos_gui
+        run: npm run check
+
+      - name: Install Playwright browsers
+        working-directory: agentos_gui
+        run: npx playwright install --with-deps chromium
+
+      - name: Playwright suite
+        working-directory: agentos_gui
+        run: npm run test
+
+      - name: cargo test (including the agentOS drift guard, required)
+        working-directory: agentos_gui/src-tauri
+        env:
+          # ${{ github.workspace }} is the directory containing both sibling
+          # checkouts above (agentos_gui/ and agentos/), so this always
+          # resolves regardless of the runner's absolute path.
+          AGENTOS_SRC: ${{ github.workspace }}/agentos
+          # A skip here (tree not found) must fail the build, not pass --
+          # the checkout step above guarantees the tree exists, so any skip
+          # in this job means the checkout broke, not that the tree is
+          # legitimately absent (that's the normal, acceptable local case).
+          AGENTOS_DRIFT_GUARD_REQUIRED: '1'
+        run: cargo test

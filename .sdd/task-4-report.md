@@ -211,3 +211,141 @@ documents that choice explicitly in "Keeping the re-declared constants honest" >
   everything** — `CC_OK`/`CC_ERR_NOT_PERMITTED` are `enum cc_error` members, which needed a
   separate parser (`parse_enum_value`) from the `#define` one. I verified both forms work
   against the real source rather than assuming one style covered everything.
+
+---
+
+# Fix round 1 — give the guard a reason to ever run
+
+## The gap that was found
+
+The coordinator checked the premise behind one of my own disclosed concerns and found it
+understated: I had written "this repo's CI does not currently check out agentOS, so the
+guard will skip there," implying a CI existed that merely didn't check out the tree. **This
+repo has no CI at all** — no `.github/workflows` directory, confirmed by `ls`/`find` before
+making any change. Combined with the other disclosed concern (a bare `cargo test` reports
+`ok` identically for a skip and a real pass), the conclusion is correct and sharper than what
+I wrote: as shipped in the first round, the guard would not have caught any of the three
+failures that motivated this task, because nothing was ever going to run it automatically.
+The four-month outage happened because no automation existed, not because no test existed —
+adding a test to a repo with no CI doesn't change that.
+
+## What changed in this round
+
+1. **`src-tauri/src/cc_ipc.rs`** — `drift_guard_against_agentos_source` now reads
+   `AGENTOS_DRIFT_GUARD_REQUIRED`. When unset (or not `"1"`), behavior is unchanged: a
+   missing tree skips with the same banner as before. When set to `"1"` and the tree is
+   missing, the same banner prints and then an `assert!` panics with a message naming the
+   flag and pointing at the checkout step — a hard test failure, not a skip. The doc comment
+   above the test was updated to describe both modes.
+
+2. **`.github/workflows/ci.yml`** (new) — a single `test` job on `ubuntu-latest` that:
+   - checks out this repo at `path: agentos_gui` and `jordanhubbard/agentos` at
+     `path: agentos` (siblings under `$GITHUB_WORKSPACE`)
+   - installs Node 20, a stable Rust toolchain, and the Tauri Linux build deps
+     (`libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev` — needed
+     for `cargo test` to even *compile* the `src-tauri` crate on Linux, per this repo's own
+     documented Prerequisites)
+   - runs `npm ci`, `npm run check`, installs Playwright's Chromium, runs `npm run test`
+   - runs `cargo test` under `src-tauri/` with `AGENTOS_SRC=$GITHUB_WORKSPACE/agentos` and
+     `AGENTOS_DRIFT_GUARD_REQUIRED=1`
+   - deliberately does **not** build or boot agentOS — only its source tree is checked out,
+     for the drift guard to read headers from; building/booting needs the qualified seL4 SDK
+     and was explicitly out of scope
+
+3. **`README.md`** — rewrote "Telling a skip from a pass" into "Two modes: optional locally,
+   required in CI," documenting `AGENTOS_DRIFT_GUARD_REQUIRED=1`, and rewrote "CI" to
+   describe the actual workflow (what it runs, why it skips building agentOS, and what it
+   still doesn't cover).
+
+## Verification
+
+### 1. `AGENTOS_SRC=/Users/jkh/Src/agentos`, `AGENTOS_DRIFT_GUARD_REQUIRED=1` — must pass
+
+```
+$ AGENTOS_SRC=/Users/jkh/Src/agentos AGENTOS_DRIFT_GUARD_REQUIRED=1 cargo test drift_guard -- --nocapture
+running 1 test
+
+*** DRIFT GUARD: comparing against agentOS source at /Users/jkh/Src/agentos ***
+
+*** DRIFT GUARD: 27 MSG_CC_* opcodes + handshake + authority layout constants verified against /Users/jkh/Src/agentos ***
+
+test cc_ipc::tests::drift_guard_against_agentos_source ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.01s
+```
+
+### 2. `AGENTOS_SRC=/tmp/nonexistent-agentos-<pid>`, `AGENTOS_DRIFT_GUARD_REQUIRED=1` — must FAIL
+
+```
+$ AGENTOS_SRC=/tmp/nonexistent-agentos-$$ AGENTOS_DRIFT_GUARD_REQUIRED=1 cargo test drift_guard -- --nocapture
+running 1 test
+
+*** DRIFT GUARD SKIPPED: agentOS source tree not found. ***
+Checked $AGENTOS_SRC and the sibling '../agentos' checkout. This test did NOT verify this repo's re-declared constants against anything this run -- it is a skip, not a pass. Clone agentOS as a sibling of this repo, or set AGENTOS_SRC=/path/to/agentos, to exercise it. See README.md, 'Keeping the re-declared constants honest'.
+
+thread 'cc_ipc::tests::drift_guard_against_agentos_source' panicked at src/cc_ipc.rs:1738:13:
+DRIFT GUARD: AGENTOS_DRIFT_GUARD_REQUIRED=1 but no agentOS source tree was found (checked $AGENTOS_SRC and the sibling '../agentos'). In CI this must be a hard failure, not a skip -- a skip that looks like a pass is exactly the ambiguity this flag exists to remove. Check the sibling checkout step (or AGENTOS_SRC) in the workflow.
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test cc_ipc::tests::drift_guard_against_agentos_source ... FAILED
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s
+error: test failed, to rerun pass `--lib`
+```
+
+### 3. No required flag, tree pointed at a nonexistent path — must SKIP (not fail)
+
+```
+$ AGENTOS_SRC=/tmp/nonexistent-agentos-$$ cargo test drift_guard -- --nocapture
+running 1 test
+
+*** DRIFT GUARD SKIPPED: agentOS source tree not found. ***
+Checked $AGENTOS_SRC and the sibling '../agentos' checkout. This test did NOT verify this repo's re-declared constants against anything this run -- it is a skip, not a pass. Clone agentOS as a sibling of this repo, or set AGENTOS_SRC=/path/to/agentos, to exercise it. See README.md, 'Keeping the re-declared constants honest'.
+
+test cc_ipc::tests::drift_guard_against_agentos_source ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s
+```
+
+### `npm run check`
+
+```
+> agentos-gui@0.1.0 check
+> tsc --noEmit
+```
+No output, exit 0.
+
+### Playwright suite
+
+```
+104 passed (11.6s)
+```
+All 104 tests green, unchanged.
+
+### Full `cargo test` (default env, no override — sibling `../agentos` auto-detected)
+
+```
+running 17 tests
+...
+test cc_ipc::tests::drift_guard_against_agentos_source ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+```
+
+## On the workflow YAML
+
+I validated `.github/workflows/ci.yml` parses as YAML (`python3 -c "import yaml; yaml.safe_load(open('.github/workflows/ci.yml'))"` succeeds; PyYAML 1.1 parses the bare `on:` key as the boolean `True` under the hood, which is a well-known YAML 1.1 quirk and not a workflow defect — GitHub Actions' own schema parses `on:` as the trigger key correctly). **I have not executed this workflow** — there is no way to run GitHub Actions locally in this environment, and I am not claiming it has run or passed. Everything else in this report (the four `cargo test` scenarios, `npm run check`, Playwright) was actually executed locally, on this machine, with real output pasted above.
+
+Residual risk in the unexecuted workflow I'd flag for a human to confirm on first real run:
+- Whether `jordanhubbard/agentos` is reachable by `actions/checkout` from this runner (public repo access, no auth configured).
+- Whether the pinned `libwebkit2gtk-4.1-dev` package name is still current on whatever `ubuntu-latest` resolves to at the time it runs (Ubuntu's webkit2gtk packaging has changed version suffixes before).
+- Whether `npm run test`'s Playwright `webServer` (`npx vite`) starts cleanly in the CI sandbox network-wise; `reuseExistingServer: !process.env.CI` means CI always launches it fresh, which should be fine but is untested here.
+
+## Explicit follow-up (not in scope here)
+
+A job that boots agentOS and exercises the GUI against a live `cc_pd` is the only thing that
+would have caught the second of the three motivating failures — the trace calls inside
+`Promise.all` in the refresh loop, where one `CC_ERR_NOT_PERMITTED` refusal silently stopped
+every panel from updating. That is a runtime interaction between two live processes, not a
+constant mismatch; the drift guard added here cannot see it and should not be read as if it
+does. Building that job needs the qualified seL4 SDK and a way to boot agentOS headlessly in
+CI, which is its own piece of work, explicitly out of scope for this task.

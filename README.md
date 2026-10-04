@@ -123,9 +123,9 @@ AGENTOS_SRC=/path/to/agentos cargo test drift_guard_against_agentos_source -- --
 
 It also runs as part of the normal `cargo test` / `cargo test --lib` suite in `src-tauri/`.
 
-### Telling a skip from a pass
+### Two modes: optional locally, required in CI
 
-**If no agentOS checkout can be found, the test skips — it does not fail, and critically, it
+**Locally, absent a sibling checkout, the guard skips — it does not fail, and critically, it
 does not silently pass as if it had verified something.** A `cargo test` run with no tree
 available still prints `test cc_ipc::tests::drift_guard_against_agentos_source ... ok` — that
 line only means "did not panic," which is Rust's test harness, not a claim that this test
@@ -140,17 +140,40 @@ captures and discards output from passing tests) and look for one of two banners
 A failed run always shows its output regardless of `--nocapture`, so a drift that actually
 breaks the test is loud either way.
 
+That ambiguity — "ok" meaning either "verified 27 opcodes plus the handshake and authority
+layout" or "found nothing and checked nothing" — is harmless on a contributor's laptop (they
+can just run with `--nocapture` to check), but it is exactly the gap that let this repo go
+four months without anyone noticing it couldn't connect: **no CI ran anything at all.**
+Set `AGENTOS_DRIFT_GUARD_REQUIRED=1` to remove the ambiguity by converting a skip into a hard
+test failure:
+
+```sh
+AGENTOS_SRC=/path/to/agentos AGENTOS_DRIFT_GUARD_REQUIRED=1 cargo test   # tree missing => FAILS, not skips
+```
+
+Leave `AGENTOS_DRIFT_GUARD_REQUIRED` unset for normal local development — a contributor
+without the agentOS tree cloned should not be blocked by this test.
+
 ### CI
 
-This repo's CI does not check out agentOS as a sibling today, and nothing in this task adds
-that — doing so would reintroduce exactly the build dependency the re-declaration is meant
-to avoid. **That means this guard currently skips in CI**, the same as it does for any
-contributor without a local agentOS checkout; it is a contributor-facing / local-dev guard
-in its current form, not a CI gate. Anyone who wants this to run in CI and *fail the build*
-when it skips should add a CI job that checks out `agentos` as `../agentos` (or sets
-`AGENTOS_SRC`) and treats the "DRIFT GUARD SKIPPED" banner as a failure, separately from this
-task — that is a CI/workflow decision, not something this test should force by refusing to
-build without the tree.
+`.github/workflows/ci.yml` checks out this repo and `jordanhubbard/agentos` as siblings
+(`actions/checkout` with `path: agentos_gui` / `path: agentos`), then runs `npm ci`,
+`npm run check`, the Playwright suite, and `cargo test` under `src-tauri/` with
+`AGENTOS_SRC=$GITHUB_WORKSPACE/agentos` and `AGENTOS_DRIFT_GUARD_REQUIRED=1`. Because the
+checkout step guarantees the tree is present, a skip in that job means the checkout itself
+broke, not that the tree is legitimately absent — so the required flag turns that into a
+build failure instead of a silently green run.
+
+It deliberately does **not** attempt to build or boot agentOS: that needs the qualified seL4
+SDK and a QEMU/hardware target, well outside what a GUI's CI should require. It reads only
+agentOS's *source headers* off disk for the drift guard — no agentOS build step runs.
+
+**What this CI does not cover:** anything that requires a live `cc_pd` to observe, such as a
+refused call inside a `Promise.all` silently breaking an unrelated UI panel (the GUI's
+"bricked dashboard" bug from this same hardening effort). That is a runtime interaction
+between two running processes, not a constant mismatch the drift guard can see by reading
+headers. Catching it would need a separate job that boots agentOS and drives the GUI against
+a real socket — tracked as a follow-up, not attempted here.
 
 ## Tabs
 

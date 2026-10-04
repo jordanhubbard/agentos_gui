@@ -1641,6 +1641,12 @@ mod tests {
     // of these two banners:
     //   "DRIFT GUARD: comparing against agentOS source at ..."     (ran)
     //   "DRIFT GUARD SKIPPED: agentOS source tree not found ..."   (skipped)
+    //
+    // Set `AGENTOS_DRIFT_GUARD_REQUIRED=1` to turn a skip into a hard
+    // failure -- this is how CI (which always has a sibling checkout)
+    // avoids ever reporting "ok" for a run that verified nothing, without
+    // making local development fail for contributors who simply don't
+    // have the agentOS tree cloned.
     // See README.md, "Keeping the re-declared constants honest," for more.
 
     /// Locate the agentOS source tree: the `AGENTOS_SRC` env var if set,
@@ -1718,6 +1724,9 @@ mod tests {
     #[test]
     fn drift_guard_against_agentos_source() {
         let Some(root) = find_agentos_src() else {
+            let required = std::env::var("AGENTOS_DRIFT_GUARD_REQUIRED")
+                .map(|v| v == "1")
+                .unwrap_or(false);
             eprintln!(
                 "\n*** DRIFT GUARD SKIPPED: agentOS source tree not found. ***\n\
                  Checked $AGENTOS_SRC and the sibling '../agentos' checkout. This test \
@@ -1725,6 +1734,14 @@ mod tests {
                  run -- it is a skip, not a pass. Clone agentOS as a sibling of this \
                  repo, or set AGENTOS_SRC=/path/to/agentos, to exercise it. See \
                  README.md, 'Keeping the re-declared constants honest'.\n"
+            );
+            assert!(
+                !required,
+                "DRIFT GUARD: AGENTOS_DRIFT_GUARD_REQUIRED=1 but no agentOS source tree \
+                 was found (checked $AGENTOS_SRC and the sibling '../agentos'). In CI this \
+                 must be a hard failure, not a skip -- a skip that looks like a pass is \
+                 exactly the ambiguity this flag exists to remove. Check the sibling \
+                 checkout step (or AGENTOS_SRC) in the workflow."
             );
             return;
         };
