@@ -1617,4 +1617,284 @@ mod tests {
         let other = authority_err(9); // CC_ERR_INVALID_ARG
         assert_eq!(other.kind(), io::ErrorKind::Other);
     }
+
+    // ── Drift guard against the agentOS source tree ─────────────────────
+    //
+    // Everything above this point in this file re-declares protocol
+    // constants owned by agentOS, by design (see README.md "Zero kernel
+    // headers included"). That separation is deliberate, but until now
+    // nothing checked it -- which is how a mandatory first frame
+    // (MSG_CC_CONNECTION_SYNC, landed in cc_pd 2026-09-21) and a wrong
+    // authority-row layout (name[48]/80 bytes specified vs. the real
+    // name[32]/60 bytes) both slipped past unnoticed. This test parses the
+    // authoritative #define/enum values straight out of the agentOS source
+    // tree, if it can find one, and fails loudly if this repo's copies
+    // have drifted from them.
+    //
+    // *** THIS TEST SKIPS, RATHER THAN FAILS OR PASSES MEANINGFULLY, WHEN
+    // IT CANNOT FIND AN agentOS TREE. *** `cargo test` will still print
+    // "test cc_ipc::tests::drift_guard_against_agentos_source ... ok" in
+    // that case -- that is Rust's test harness reporting "did not panic,"
+    // not this test claiming to have verified anything. To tell a skip
+    // from a real pass, run `cargo test -- --nocapture` (output is
+    // captured and hidden by default on a passing test) and look for one
+    // of these two banners:
+    //   "DRIFT GUARD: comparing against agentOS source at ..."     (ran)
+    //   "DRIFT GUARD SKIPPED: agentOS source tree not found ..."   (skipped)
+    // See README.md, "Keeping the re-declared constants honest," for more.
+
+    /// Locate the agentOS source tree: the `AGENTOS_SRC` env var if set,
+    /// else the sibling `../agentos` checkout (relative to this repo's
+    /// root, i.e. `CARGO_MANIFEST_DIR/../../agentos` from `src-tauri`).
+    /// Returns `None` -- never panics, never falls back silently -- if
+    /// neither resolves to a real checkout, so the caller can skip loudly
+    /// instead of erroring out on a contributor who simply doesn't have
+    /// the other repo cloned.
+    fn find_agentos_src() -> Option<std::path::PathBuf> {
+        let candidate = if let Ok(p) = std::env::var("AGENTOS_SRC") {
+            std::path::PathBuf::from(p)
+        } else {
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../agentos")
+        };
+        let marker = candidate.join("kernel/agentos-root-task/include/agentos.h");
+        if marker.is_file() {
+            Some(candidate)
+        } else {
+            None
+        }
+    }
+
+    /// Parse the integer value out of a simple `#define NAME value` macro
+    /// -- the style used throughout agentOS's headers: optional `0x...`
+    /// hex or decimal, optional trailing `u`/`U`/`l`/`L` suffix, rest of
+    /// the line (comments, etc.) ignored.
+    fn parse_c_define(src: &str, name: &str) -> Option<i64> {
+        for line in src.lines() {
+            let line = line.trim_start();
+            if !line.starts_with("#define") {
+                continue;
+            }
+            let rest = line["#define".len()..].trim_start();
+            let mut parts = rest.splitn(2, char::is_whitespace);
+            if parts.next()? != name {
+                continue;
+            }
+            let value_part = parts.next()?.trim_start();
+            let token = value_part.split_whitespace().next()?;
+            let token = token.trim_end_matches(['u', 'U', 'l', 'L']);
+            return parse_int_token(token);
+        }
+        None
+    }
+
+    /// Parse `NAME = <value>,` out of a C enum body (used for `CC_OK` and
+    /// `CC_ERR_NOT_PERMITTED`, which are `enum cc_error` members, not
+    /// `#define`s, in cc_contract.h).
+    fn parse_enum_value(src: &str, name: &str) -> Option<i64> {
+        for line in src.lines() {
+            let line = line.trim();
+            if !line.starts_with(name) {
+                continue;
+            }
+            let after_name = line[name.len()..].trim_start();
+            if !after_name.starts_with('=') {
+                continue;
+            }
+            let value_part = after_name[1..].trim_start();
+            let token = value_part.split(|c: char| c == ',' || c.is_whitespace()).next()?;
+            return parse_int_token(token);
+        }
+        None
+    }
+
+    fn parse_int_token(token: &str) -> Option<i64> {
+        if let Some(hex) = token.strip_prefix("0x").or_else(|| token.strip_prefix("0X")) {
+            i64::from_str_radix(hex, 16).ok()
+        } else {
+            token.parse::<i64>().ok()
+        }
+    }
+
+    #[test]
+    fn drift_guard_against_agentos_source() {
+        let Some(root) = find_agentos_src() else {
+            eprintln!(
+                "\n*** DRIFT GUARD SKIPPED: agentOS source tree not found. ***\n\
+                 Checked $AGENTOS_SRC and the sibling '../agentos' checkout. This test \
+                 did NOT verify this repo's re-declared constants against anything this \
+                 run -- it is a skip, not a pass. Clone agentOS as a sibling of this \
+                 repo, or set AGENTOS_SRC=/path/to/agentos, to exercise it. See \
+                 README.md, 'Keeping the re-declared constants honest'.\n"
+            );
+            return;
+        };
+        eprintln!("\n*** DRIFT GUARD: comparing against agentOS source at {} ***\n", root.display());
+
+        let agentos_h = std::fs::read_to_string(root.join("kernel/agentos-root-task/include/agentos.h"))
+            .expect("agentos.h should be readable: its presence was just checked");
+        let cc_contract_h = std::fs::read_to_string(
+            root.join("kernel/agentos-root-task/include/contracts/cc_contract.h"),
+        )
+        .expect("cc_contract.h should be present in an agentOS checkout");
+        let operator_credential_h = std::fs::read_to_string(
+            root.join("kernel/agentos-root-task/include/cc_operator_credential.h"),
+        )
+        .expect("cc_operator_credential.h should be present in an agentOS checkout");
+        let authority_h = std::fs::read_to_string(root.join("platform/include/platform/authority.h"))
+            .expect("platform/include/platform/authority.h should be present in an agentOS checkout");
+
+        // ── MSG_CC_* opcodes ──────────────────────────────────────────────
+        let opcodes: &[(&str, u32)] = &[
+            ("MSG_CC_CONNECT", MSG_CC_CONNECT),
+            ("MSG_CC_DISCONNECT", MSG_CC_DISCONNECT),
+            ("MSG_CC_SEND", MSG_CC_SEND),
+            ("MSG_CC_RECV", MSG_CC_RECV),
+            ("MSG_CC_STATUS", MSG_CC_STATUS),
+            ("MSG_CC_LIST", MSG_CC_LIST),
+            ("MSG_CC_LIST_GUESTS", MSG_CC_LIST_GUESTS),
+            ("MSG_CC_LIST_DEVICES", MSG_CC_LIST_DEVICES),
+            ("MSG_CC_LIST_POLECATS", MSG_CC_LIST_POLECATS),
+            ("MSG_CC_GUEST_STATUS", MSG_CC_GUEST_STATUS),
+            ("MSG_CC_DEVICE_STATUS", MSG_CC_DEVICE_STATUS),
+            ("MSG_CC_ATTACH_FRAMEBUFFER", MSG_CC_ATTACH_FRAMEBUFFER),
+            ("MSG_CC_SEND_INPUT", MSG_CC_SEND_INPUT),
+            ("MSG_CC_SNAPSHOT", MSG_CC_SNAPSHOT),
+            ("MSG_CC_RESTORE", MSG_CC_RESTORE),
+            ("MSG_CC_LOG_STREAM", MSG_CC_LOG_STREAM),
+            ("MSG_CC_CREATE_GUEST", MSG_CC_CREATE_GUEST),
+            ("MSG_CC_FAULT_INJECT", MSG_CC_FAULT_INJECT),
+            ("MSG_CC_SUSPEND_GUEST", MSG_CC_SUSPEND_GUEST),
+            ("MSG_CC_RESUME_GUEST", MSG_CC_RESUME_GUEST),
+            ("MSG_CC_DESTROY_GUEST", MSG_CC_DESTROY_GUEST),
+            ("MSG_CC_TRACE_START", MSG_CC_TRACE_START),
+            ("MSG_CC_TRACE_STOP", MSG_CC_TRACE_STOP),
+            ("MSG_CC_TRACE_QUERY", MSG_CC_TRACE_QUERY),
+            ("MSG_CC_TRACE_DUMP", MSG_CC_TRACE_DUMP),
+            ("MSG_CC_CONNECTION_SYNC", MSG_CC_CONNECTION_SYNC),
+            ("MSG_CC_AUTHORITY", MSG_CC_AUTHORITY),
+        ];
+        for (name, ours) in opcodes {
+            let theirs = parse_c_define(&agentos_h, name)
+                .unwrap_or_else(|| panic!("DRIFT GUARD: {name} not found in agentos.h -- renamed or removed?"));
+            assert_eq!(
+                *ours as i64, theirs,
+                "DRIFT GUARD: {name} = {:#x} in this repo but {:#x} in agentos.h -- re-declared opcode has drifted",
+                ours, theirs
+            );
+        }
+
+        // ── Handshake constants ───────────────────────────────────────────
+        let their_magic = parse_c_define(&cc_contract_h, "CC_CONNECTION_MAGIC")
+            .expect("DRIFT GUARD: CC_CONNECTION_MAGIC not found in cc_contract.h");
+        assert_eq!(CC_CONNECTION_MAGIC as i64, their_magic, "DRIFT GUARD: CC_CONNECTION_MAGIC drifted");
+
+        let their_version = parse_c_define(&cc_contract_h, "CC_CONNECTION_VERSION")
+            .expect("DRIFT GUARD: CC_CONNECTION_VERSION not found in cc_contract.h");
+        assert_eq!(CC_CONNECTION_VERSION as i64, their_version, "DRIFT GUARD: CC_CONNECTION_VERSION drifted");
+
+        let their_ok = parse_enum_value(&cc_contract_h, "CC_OK")
+            .expect("DRIFT GUARD: CC_OK not found in cc_contract.h's enum cc_error");
+        assert_eq!(CC_OK as i64, their_ok, "DRIFT GUARD: CC_OK drifted");
+
+        let their_not_permitted = parse_enum_value(&cc_contract_h, "CC_ERR_NOT_PERMITTED")
+            .expect("DRIFT GUARD: CC_ERR_NOT_PERMITTED not found in cc_contract.h's enum cc_error");
+        assert_eq!(
+            CC_ERR_NOT_PERMITTED as i64, their_not_permitted,
+            "DRIFT GUARD: CC_ERR_NOT_PERMITTED drifted"
+        );
+
+        // ── Wire frame sizes ────────────────────────────────────────────
+        // CC_MAX_CMD_BYTES / CC_MAX_RESP_BYTES are agentOS's names for the
+        // shmem region this repo calls CC_SHMEM_SIZE; request/reply frame
+        // sizes aren't separately named constants in the C header (the doc
+        // comment just says "4112-byte"), so we reconstruct and compare
+        // them from the shmem size plus the fixed opcode/mr header widths.
+        let their_max_cmd = parse_c_define(&cc_contract_h, "CC_MAX_CMD_BYTES")
+            .expect("DRIFT GUARD: CC_MAX_CMD_BYTES not found in cc_contract.h");
+        let their_max_resp = parse_c_define(&cc_contract_h, "CC_MAX_RESP_BYTES")
+            .expect("DRIFT GUARD: CC_MAX_RESP_BYTES not found in cc_contract.h");
+        assert_eq!(
+            their_max_cmd, their_max_resp,
+            "DRIFT GUARD: agentOS's own CC_MAX_CMD_BYTES and CC_MAX_RESP_BYTES diverged; \
+             this repo assumes one shmem size for both directions"
+        );
+        assert_eq!(
+            CC_SHMEM_SIZE as i64, their_max_cmd,
+            "DRIFT GUARD: CC_SHMEM_SIZE drifted from agentOS's CC_MAX_CMD_BYTES/CC_MAX_RESP_BYTES"
+        );
+        assert_eq!(
+            CC_REQ_SIZE as i64,
+            4 + 12 + their_max_cmd,
+            "DRIFT GUARD: request frame size (opcode(4) + mr[3](12) + shmem) drifted"
+        );
+        assert_eq!(
+            CC_REPLY_SIZE as i64,
+            16 + their_max_resp,
+            "DRIFT GUARD: reply frame size (mr[4](16) + shmem) drifted"
+        );
+        assert_eq!(
+            CC_GREETING_SIZE, CC_REPLY_SIZE,
+            "DRIFT GUARD: greeting frame no longer matches the reply wire shape"
+        );
+
+        // ── Operator credential ───────────────────────────────────────────
+        let their_token_bytes = parse_c_define(&operator_credential_h, "CC_OPERATOR_TOKEN_BYTES")
+            .expect("DRIFT GUARD: CC_OPERATOR_TOKEN_BYTES not found in cc_operator_credential.h");
+        assert_eq!(
+            CC_OPERATOR_TOKEN_BYTES as i64, their_token_bytes,
+            "DRIFT GUARD: CC_OPERATOR_TOKEN_BYTES drifted"
+        );
+
+        // ── Authority snapshot layout ───────────────────────────────────
+        // This is the one that just bit: a prior brief specified
+        // name[48]/80-byte rows, and the real struct is name[32]/60-byte
+        // rows. A struct-size check here would have caught it instantly.
+        let their_name_len = parse_c_define(&authority_h, "AOS_AUTHORITY_NAME_LEN")
+            .expect("DRIFT GUARD: AOS_AUTHORITY_NAME_LEN not found in authority.h");
+        assert_eq!(
+            AOS_AUTHORITY_NAME_LEN as i64, their_name_len,
+            "DRIFT GUARD: AOS_AUTHORITY_NAME_LEN drifted -- row parsing would read wrong offsets"
+        );
+
+        let their_kind_count = parse_c_define(&authority_h, "AOS_AUTHORITY_KIND_COUNT")
+            .expect("DRIFT GUARD: AOS_AUTHORITY_KIND_COUNT not found in authority.h");
+        assert_eq!(
+            AOS_AUTHORITY_KIND_COUNT as i64, their_kind_count,
+            "DRIFT GUARD: AOS_AUTHORITY_KIND_COUNT drifted -- counts[] array length mismatch"
+        );
+
+        let their_max_pds = parse_c_define(&authority_h, "AOS_AUTHORITY_MAX_PDS")
+            .expect("DRIFT GUARD: AOS_AUTHORITY_MAX_PDS not found in authority.h");
+        assert_eq!(
+            AOS_AUTHORITY_MAX_PDS as i64, their_max_pds,
+            "DRIFT GUARD: AOS_AUTHORITY_MAX_PDS drifted -- snapshot size mismatch"
+        );
+
+        let their_authority_version = parse_c_define(&authority_h, "AOS_AUTHORITY_VERSION")
+            .expect("DRIFT GUARD: AOS_AUTHORITY_VERSION not found in authority.h");
+        assert_eq!(
+            AOS_AUTHORITY_VERSION as i64, their_authority_version,
+            "DRIFT GUARD: AOS_AUTHORITY_VERSION drifted"
+        );
+
+        // Row stride, computed from the *real* field widths read above --
+        // not hardcoded -- which is exactly the check that would have
+        // caught the name[48]/80-byte spec error before any parsing code
+        // was built against it.
+        let their_row_len = 4 + their_name_len + their_kind_count * 2 + 2;
+        assert_eq!(
+            AUTHORITY_ROW_LEN as i64, their_row_len,
+            "DRIFT GUARD: authority row stride drifted ({} bytes here vs {} computed from \
+             agentOS's own field widths) -- a parser built to the old stride reads counts \
+             and names at the wrong offsets and renders plausible garbage instead of crashing",
+            AUTHORITY_ROW_LEN, their_row_len
+        );
+
+        eprintln!(
+            "*** DRIFT GUARD: {} MSG_CC_* opcodes + handshake + authority layout constants verified against {} ***\n",
+            opcodes.len(),
+            root.display()
+        );
+    }
+
 }
