@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { Download } from 'lucide-react';
 import type { GuestInfo, InputEvent } from '../types';
+import type { ConsoleChunk } from '../hooks/useAgentOS';
 import {
   CC_INPUT_KEY_DOWN,
   rawTerminalKeycode,
@@ -11,19 +12,17 @@ import {
 
 interface Props {
   guest: GuestInfo | null;
-  chunks: string[];
-  onFetch: (slot: number, pdId: number) => Promise<string>;
+  chunks: ConsoleChunk[];
+  onFetch: () => Promise<string>;
   onSendInput: (handle: number, event: InputEvent) => Promise<void>;
 }
 
-const CONSOLE_SLOT = 0;
-const CONSOLE_PD = 0;
 const encoder = new TextEncoder();
 
 export function GuestConsole({ guest, chunks, onFetch, onSendInput }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
-  const chunkIndexRef = useRef(0);
+  const lastSequenceRef = useRef(0);
   const sendQueueRef = useRef<Promise<void>>(Promise.resolve());
   const guestRef = useRef<GuestInfo | null>(guest);
   const onSendInputRef = useRef(onSendInput);
@@ -81,6 +80,7 @@ export function GuestConsole({ guest, chunks, onFetch, onSendInput }: Props) {
     term.focus();
 
     termRef.current = term;
+    lastSequenceRef.current = 0;
     setReady(true);
 
     const dataDisposable = term.onData(data => queueTerminalData(data));
@@ -103,14 +103,12 @@ export function GuestConsole({ guest, chunks, onFetch, onSendInput }: Props) {
     const term = termRef.current;
     if (!term || !ready) return;
 
-    if (chunks.length < chunkIndexRef.current) {
-      term.clear();
-      chunkIndexRef.current = 0;
-    }
-
-    while (chunkIndexRef.current < chunks.length) {
-      term.write(chunks[chunkIndexRef.current]);
-      chunkIndexRef.current += 1;
+    // Retention evicts old chunks without changing the array length. Sequence
+    // numbers distinguish new output even when consecutive chunks are identical.
+    for (const chunk of chunks) {
+      if (chunk.sequence <= lastSequenceRef.current) continue;
+      term.write(chunk.text);
+      lastSequenceRef.current = chunk.sequence;
     }
   }, [chunks, ready]);
 
@@ -118,7 +116,7 @@ export function GuestConsole({ guest, chunks, onFetch, onSendInput }: Props) {
     setBusy(true);
     setStatus(null);
     try {
-      const text = await onFetch(CONSOLE_SLOT, CONSOLE_PD);
+      const text = await onFetch();
       setStatus(text ? `${text.length} bytes` : '0 bytes');
     } catch (e) {
       setStatus(String(e));
@@ -168,7 +166,7 @@ export function GuestConsole({ guest, chunks, onFetch, onSendInput }: Props) {
         )}
         <button
           onClick={drain}
-          disabled={busy}
+          disabled={busy || !guest}
           title="Drain"
           className="flex h-8 items-center gap-2 rounded-lg border border-os-border px-3 font-mono text-xs
                      text-os-muted transition hover:border-os-accent/50 hover:text-os-accent

@@ -1,0 +1,40 @@
+{
+  "schema": "agentos_gui.packed_legacy_native.v1",
+  "host": "sparky Linux aarch64 DISPLAY=:1",
+  "gui_runtime": "2f9c96d",
+  "gui_binary_sha256": "8182ffb35456aaa261875b7ea32275054cbf0c73b108aa784e92c0f365368481",
+  "os_runtime": "3999e6d1556bb900869fd8018926dc36973ae34e",
+  "scope": "New native GUI against retained legacy raw-only server; not packed-server acceptance",
+  "client_comparison": {
+    "bytes": 3145728,
+    "raw_ms": 7903.044175,
+    "gui_batch_ms": 7133.188583,
+    "pixels_equal": true,
+    "order": "raw-first",
+    "limitation": "Single sample with uncontrolled host load; no performance improvement claimed"
+  },
+  "native": {
+    "launch": "make run with DISPLAY=:1, explicit APP_BIN and retained yYvPP9 CC socket",
+    "resolution": [1024, 768],
+    "initial_capture_seconds": 9.9,
+    "initial_sequence": 9182,
+    "input": "Clicked canvas; injected agentos-legacy-ui physical key events, without Enter",
+    "acknowledged_batches": 34,
+    "immediate_capture": {"sequence": 9258, "seconds": 8.8, "visible_text": "agentos-leg"},
+    "settled_capture": {"sequence": 9329, "seconds": 8.7, "visible_text": "agentos-legacy-ui"},
+    "cleanup": "Sent Ctrl+U to guest, then closed native window with Alt+F4; launcher exited zero",
+    "limitations": [
+      "Immediate snapshot preceded full guest consumption; acknowledgments are not presentation proof",
+      "No precise input-to-photon latency measured",
+      "Console login screen, not a desktop application or pointer acceptance",
+      "No abrupt-disconnect cleanup claim; Ctrl+U cleanup was not recaptured"
+    ]
+  },
+  "artifacts": "/home/jkh/.local/share/agentos-evidence/2026-09-19-packed-frame/",
+  "screenshots": {
+    "agentos-gui-packed-legacy-capture.png": "a52e893e0c8578d7b43dbe3c67242d798687685280af47160bf9c421c99a8066",
+    "agentos-gui-packed-legacy-input.png": "b95bc8223404c108dd306935666e0169f88f942fd77f4444e2a248fb1de2835c",
+    "agentos-gui-packed-legacy-input-settled.png": "987fea5d23e47fdaffce44de29b84bcf17c71c4d8117cbeb07f8ff17cd879bf8"
+  },
+  "task": "task_5dd48e2ddd46473ab45df5b8ae8ee6c1"
+}

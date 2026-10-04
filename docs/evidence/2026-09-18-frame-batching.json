@@ -1,0 +1,74 @@
+{
+  "host": "Spark ARM64 Linux, native Tauri/WebKit on X11",
+  "agentos_revision": "7e8ebaaf049569b2d2a7696c96dfb68710eb5386",
+  "retained_guest": "build/tmp/agentos-qemu-3BKjjm",
+  "frame_bytes": 3145728,
+  "width": 1024,
+  "height": 768,
+  "trials": [
+    {
+      "variant": "baseline",
+      "revision": "bb70be5b5a937c982d247e8d48f14b3fb8ce35fe",
+      "binary_sha256": "c0a590cf03bbb1ae9a51cdc89edb994e2069364f6638d8572663145f1867f593",
+      "displayed_seconds": 44.4,
+      "frame_sequence": 1687,
+      "screenshot": "/tmp/agentos-gui-baseline-timing1.png",
+      "screenshot_sha256": "ce1405c90113a2da99b28ca1426814ae4fb38a485b5df8f778128176b76e440b"
+    },
+    {
+      "variant": "bounded batching",
+      "revision": "2130943",
+      "binary_sha256": "164ede8b5db0f9b58f56a4a0f55a4ca26b5c997744684002155a4bb47ef41b18",
+      "displayed_seconds": 42.5,
+      "frame_sequence": 2054,
+      "screenshot": "/tmp/agentos-gui-batch-timing1-final.png",
+      "screenshot_sha256": "c4c41f7856363ad3b2907ce0cfe3fef5660f829e509e064e81ba9fc57cbbff47"
+    },
+    {
+      "variant": "bounded batching, second capture",
+      "revision": "2130943",
+      "displayed_seconds": 42.5,
+      "frame_sequence": 2460,
+      "screenshot": "/tmp/agentos-gui-batch-timing2-final.png",
+      "screenshot_sha256": "3c7870b138d97d8d3e946148575c6a4cc758eef2c3663971148937850b88ee13"
+    }
+  ],
+  "cancellation": "A subsequent candidate capture was observed at 17 percent, then cancelled through the native button. Capture controls became available again and the previously completed image remained visible.",
+  "limits": [
+    "One baseline and two candidate trials; no statistical speedup or interactive performance claim.",
+    "Timings are rounded values reported by the native UI.",
+    "Screenshots and executables are retained local artifacts, not embedded in this receipt.",
+    "Only A press-release during transfer is qualified here; no physical display hardware or full keyboard mapping claim."
+  ],
+  "input_during_capture": {
+    "status": "passed",
+    "device": "/dev/input/event0",
+    "method": "Native focused canvas A key during active capture; authenticated SSH reads four Linux input_event records",
+    "bytes": 96,
+    "events_type_code_value": [
+      [
+        1,
+        30,
+        1
+      ],
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        1,
+        30,
+        0
+      ],
+      [
+        0,
+        0,
+        0
+      ]
+    ],
+    "log": "/tmp/agentos-gui-batch-input-events.log",
+    "log_sha256": "b6329cf9098b4e2bb4e296b65ffcc5f14d0f7706c00f9e63b43bbc9beccdeb3b",
+    "limit": "No measured input latency bound; only one key press-release pair qualified"
+  }
+}

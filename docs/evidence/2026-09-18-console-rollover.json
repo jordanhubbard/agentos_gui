@@ -1,0 +1,33 @@
+{
+  "schema": "agentos_gui.console_rollover.v1",
+  "revision": "8fb857dd88809b6688b1e313186f1eb6fe85d830",
+  "host": "sparky Linux ARM64",
+  "result": "passed",
+  "checks": ["make check", "make test: 122 passed", "make build"],
+  "browser_acceptance": [
+    "310 identical chunks all rendered across 300-chunk retention boundary",
+    "Fresh output rendered after rollover, clear and reconnect",
+    "Delayed output remains with the guest originally requested"
+  ],
+  "native_acceptance": {
+    "transport": "Native Tauri Unix binary socket connected to src-tauri/examples/console_fixture.rs",
+    "launch": "DISPLAY=:88 LIBGL_ALWAYS_SOFTWARE=1 WEBKIT_DISABLE_DMABUF_RENDERER=1 make run CC_PD_SOCK=/tmp/agentos-rollover-native.sock",
+    "fixture_build": "rustc --edition=2021 src-tauri/examples/console_fixture.rs -o /tmp/agentos-console-fixture",
+    "fixture_launch": "/tmp/agentos-console-fixture /tmp/agentos-rollover-native.sock",
+    "interaction": "X11 Drain clicks plus normal polling consumed more than 350 chunks; screenshot visibly contains NATIVE-ROLLOVER-339 through NATIVE-ROLLOVER-345",
+    "screenshot": "/tmp/agentos-native-rollover-pass.png",
+    "screenshot_sha256": "9064277742e5775934292a3b450cf1ac5d22125f61255bf64b6e977455e19246",
+    "binary_sha256": "132f60ef7b9d61933b7b626ebfbc25afc3279db7862dd0ef718a86e771513542",
+    "cleanup": "Owned GUI, fixture and Xvfb processes terminated; temporary target symlink and socket removed"
+  },
+  "browser_log": "/tmp/agentos-gui-rollover-tests-final.log",
+  "browser_log_sha256": "705fdd2f1061c5b8523401a599f3561d1ae4a025a93e89a214acb329d778c91e",
+  "build_log": "/tmp/agentos-gui-rollover-build.log",
+  "build_log_sha256": "7c735286bf3bf5f3ec17f695fde4a359dd4905b8bb20d923fa7897de8716252d",
+  "limitations": [
+    "Native fixture qualifies rendering through the binary bridge, not real guest output generation",
+    "Real Intel guest lifecycle and console qualification is recorded separately in 2026-09-18-intel-console.json",
+    "Abrupt disconnect and held-input release remain separate outstanding work",
+    "Required CI and canonical integration remain pending"
+  ]
+}

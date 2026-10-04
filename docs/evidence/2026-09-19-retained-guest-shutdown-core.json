@@ -1,0 +1,59 @@
+{
+  "schema": "agentos_gui.retained_guest_diagnostic.v1",
+  "date": "2026-09-19",
+  "task": "task_8a2c2bce4cd20a3ce3cbc58fcb48f456",
+  "qualification_task": "task_00ba79d8c6024e43a5cb3d7dffff9696",
+  "gui_revision": "11aba4f0f5a6eb9a614e3ed499efc53ed9734293",
+  "gui_binary_sha256": "326ec3e0c6a5368b1a9af9c2a5a14c0a20d4297ac718a54d22760acef380a735",
+  "os_runtime_revision": "b16bfe214f9dbc04fdde6265bd343bd058135563",
+  "sdk": "2.3.1-agentos-e60776ac-cr2",
+  "core_qualification": "failed before input readiness; guest retained for diagnosis",
+  "transport": "Native Tauri app over binary CC Unix socket, live display enabled",
+  "native_input": {
+    "guest_assertions_passed": true,
+    "transitions": 20,
+    "median_ms": 388.352157,
+    "max_ms": 771.267578,
+    "p95_ms": 771.256202,
+    "scope": "X11 key pairs to guest evdev receipts, including SSH return and host scheduling; not one-way or input-to-render latency."
+  },
+  "ssh_control": {
+    "guest_assertions_passed": true,
+    "median_ms": 373.9357835,
+    "max_ms": 1297.046194,
+    "p95_ms": 1295.823421,
+    "scope": "Separate SSH-only echo control; do not subtract unpaired samples from native measurements."
+  },
+  "ssh_options": "Diagnostic ServerAliveInterval=30, ServerAliveCountMax=2; benchmark readiness and 3-second receipt limits unchanged. Core qualification limits unchanged.",
+  "visual_observation": "Guest login framebuffer visible at 1024x768; UI reported 4.8 and 3.5 second captures and 20 acknowledged input batches.",
+  "shutdown": {
+    "action": "Click Stop live display, then Alt+F4 on this app window",
+    "pid": 3620057,
+    "window": 58720259,
+    "result": "SIGSEGV; make exit 2 / application status 139",
+    "core_limit": "Process-local soft limit raised from zero to unlimited before close; no global core policy changed.",
+    "crashing_thread": "LWP 3620062",
+    "stack": [
+      "pthread_mutex_lock(mutex=0x0)",
+      "XextFindDisplay",
+      "libXi",
+      "_XEnq",
+      "_XReadEvents",
+      "XNextEvent",
+      "stripped application frames"
+    ],
+    "source_lead": "Locked Tao 0.34.8 device.rs spawns a detached XNextEvent thread; Linux event loop invokes process::exit after run_return. Current upstream device.rs has the same structure. Exact stripped application frames and root cause remain to be confirmed."
+  },
+  "artifacts": {
+    "directory": "/home/jkh/.local/share/agentos-evidence/2026-09-19-gui-retained-crash",
+    "core_sha256": "e68da44f989333be01962c96628c9744608f5a383ec286f9a44d8a8a1810b518",
+    "backtrace_sha256": "35880d31df9a2b58ac65b7b3eb8e59a85c4a9769013ab06c1e3672e812306036",
+    "privacy": "Raw core and executable retained locally in a private directory, not committed or published."
+  },
+  "limitations": [
+    "Shutdown crash remains unresolved.",
+    "No full GUI lifecycle or release acceptance.",
+    "Original failed core qualification remains failed.",
+    "Other pre-existing GUI instance was not modified."
+  ]
+}

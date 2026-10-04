@@ -1,0 +1,37 @@
+{
+  "schema": "agentos_gui.native_shutdown_qualification.v1",
+  "date": "2026-09-19",
+  "status": "focused_tests_and_one_native_run_pass",
+  "task": "task_8a2c2bce4cd20a3ce3cbc58fcb48f456",
+  "qualification_task": "task_00ba79d8c6024e43a5cb3d7dffff9696",
+  "gui_revision": "ca2b701bf1db651dc97689f10d0a57746dae9e2c",
+  "gui_binary_sha256": "d30158561151f1ba0836144525d29e60aa4332590387fad014b9e429dd0f4acc",
+  "os_runtime_revision": "a7ed99f2ae456d2084a4b27b39993048a6576bdb",
+  "sdk": "2.3.1-agentos-e60776ac-cr2",
+  "core_qualification": "Graphics, exact scanout pixels, explicit input, server-held release and paused backpressure passed; retained guest harness shutdown pending.",
+  "change": "Own, wake and join Tao X11 device reader before event-loop return; release cookies and display on the reader thread.",
+  "checks": ["2 wake/join tests", "130 browser tests", "15 Rust tests", "TypeScript check", "cargo check", "native release build"],
+  "native_input": {
+    "guest_assertions_passed": true,
+    "transitions": 20,
+    "median_ms": 380.8227635,
+    "p95_ms": 845.155459,
+    "max_ms": 1019.159875,
+    "scope": "X11 key pairs to guest evdev receipts during live frame capture; includes SSH return and host scheduling, not one-way or input-to-render latency.",
+    "ssh_keepalive": "Diagnostic interval 30 seconds, count 2; benchmark readiness and per-receipt deadlines unchanged."
+  },
+  "visual_observation": "1024x768 Debian login framebuffer displayed; UI reported a 4.5-second capture.",
+  "shutdown": {
+    "action": "Stop live display, then Alt+F4",
+    "pid": 3727920,
+    "make_exit_code": 0,
+    "runs": 1
+  },
+  "artifact_directory": "/home/jkh/.local/share/agentos-evidence/2026-09-19-gui-x11-shutdown",
+  "limitations": [
+    "One native close does not establish absence of all shutdown races.",
+    "Original crash stack supports this lifecycle repair but stripped application frames were not symbolized.",
+    "No abrupt-disconnect or input-to-render acceptance in this run.",
+    "No full release acceptance or canonical merge."
+  ]
+}

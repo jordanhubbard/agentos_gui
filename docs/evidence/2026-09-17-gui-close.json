@@ -1,0 +1,32 @@
+{
+  "schema": "agentos_gui.close_investigation.v1",
+  "host": "sparky Linux aarch64",
+  "gui_runtime_revision": "b80ef792174432ed22f84a958715e6885fe537d4",
+  "gui_binary_sha256": "fc86e38e86c90016660715e5635e616e9830569d1bb8603c2bd7b656834b24d3",
+  "original_observation": "After successful guest keyboard checks, the GUI exec handle returned143 following Alt-F4, without a native-log diagnostic. The original process was not traced; signal source and cause are unknown.",
+  "method": "strace -ff -e trace=process -e signal=all around make run; identify native window PID before closing it with Alt-F4",
+  "disconnected_repeat": {
+    "result": "PASS: application exit_group(0), shell and make exit0",
+    "application_pid": 1381429,
+    "trace": "/tmp/agentos-gui-close.trace.1381429",
+    "trace_sha256": "216d886dd5101437cda9bc252894ee107b176e94742634fac14b18fd8dd90e6a"
+  },
+  "connected_repeat": {
+    "result": "PASS: native GUI connected to real CC-PD; application exit_group(0), make exit0",
+    "os_command": "make run GUEST_OS=none",
+    "os_checkout": "8ce7d3df7d991bb99cb9268d329ea250a7f61131",
+    "socket": "/tmp/agentos-v04-debian-network/build/cc_pd.sock",
+    "application_pid": 1399547,
+    "trace": "/tmp/agentos-gui-connected-close.trace.1399547",
+    "trace_sha256": "dbfdb55cdd0101aad9824b627fbb453f6539ca28ddaf59c1354bb797b24421ac",
+    "screenshot_sha256": "da1af32f46fb8572237116fcacac3e39fc17dcfdde5778dd50b4ebdda8704d9e"
+  },
+  "journal_check": "No relevant application crash, OOM or kill diagnostic found in bounded user/kernel journal queries around the original close",
+  "conclusion": "Exit143 did not reproduce in these controlled runs. No application fix or explanation of the original exit is claimed.",
+  "limitations": [
+    "Connected repeat uses no guest; it does not duplicate the preceding guest input workload",
+    "Abrupt disconnect/termination key release remains unqualified",
+    "Earlier exit137 remains a separate unresolved observation"
+  ],
+  "followup_task": "task_3bea4cc3256d495da091d83eda0d004a"
+}

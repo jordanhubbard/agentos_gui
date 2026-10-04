@@ -3,10 +3,11 @@ use std::sync::{Arc, Mutex};
 use tauri::State;
 
 use crate::cc_ipc::{
-    AuthoritySnapshot, CcClient, DeviceInfo, DeviceStatusInfo, FaultInjectResult,
-    GuestCreateRequest, GuestCreateResult, GuestInfo, GuestLifecycleResult, GuestStatus,
-    InputEvent, PoecatStatus, SessionInfo, SessionRecvResult, SessionSendResult, SessionStatus,
-    SnapResult, TraceDumpResult, TraceStatus, TrafficEvent, CC_DEV_TYPE_COUNT,
+    AuthoritySnapshot, CcClient, DesktopInputEvent, DeviceInfo, DeviceStatusInfo,
+    FaultInjectResult, FrameInfo, GuestCreateRequest, GuestCreateResult, GuestInfo,
+    GuestLifecycleResult, GuestStatus, InputBatchAck, InputEvent, PoecatStatus, SessionInfo,
+    SessionRecvResult, SessionSendResult, SessionStatus, SnapResult, TraceDumpResult, TraceStatus,
+    TrafficEvent, CC_DEV_TYPE_COUNT,
 };
 
 type ClientCell = Arc<Mutex<Option<CcClient>>>;
@@ -347,6 +348,67 @@ pub async fn cc_traffic_events(
 // ── Guests ────────────────────────────────────────────────────────────────────
 
 #[tauri::command]
+pub async fn cc_frame_capture(
+    handle: u32,
+    state: State<'_, AppState>,
+) -> Result<FrameInfo, String> {
+    with_client(state.client.clone(), move |c| {
+        c.frame_capture(handle).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn cc_frame_read(
+    token: String,
+    offset: u32,
+    length: u32,
+    state: State<'_, AppState>,
+) -> Result<tauri::ipc::Response, String> {
+    let bytes = with_client(state.client.clone(), move |c| {
+        c.frame_read_batch(&token, offset, length)
+            .map_err(|e| e.to_string())
+    })
+    .await?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+#[tauri::command]
+pub async fn cc_frame_release(token: String, state: State<'_, AppState>) -> Result<(), String> {
+    with_client(state.client.clone(), move |c| {
+        c.frame_release(&token).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+/// One atomic virtio-input batch. Callers must await its acknowledgment before
+/// submitting the next batch; only status 3 (zero accepted) permits a retry.
+#[tauri::command]
+pub async fn cc_input_submit(
+    handle: u32,
+    device: u32,
+    events: Vec<DesktopInputEvent>,
+    state: State<'_, AppState>,
+) -> Result<InputBatchAck, String> {
+    // Diagnostic timing is opt-in and contains no key/button values. Queue
+    // time includes blocking-worker scheduling and waiting for frame/status
+    // calls to release the shared socket; acknowledgment is not evdev delivery.
+    let timing = env_flag_enabled("AGENTOS_GUI_INPUT_TIMING");
+    let started = std::time::Instant::now();
+    with_client(state.client.clone(), move |c: &mut CcClient| {
+        let acquired = std::time::Instant::now();
+        let result = c.input_submit(handle, device, &events).map_err(|e| e.to_string());
+        if timing {
+            eprintln!("AGENTOS_INPUT_TIMING device={} events={} queue_us={} request_us={} ok={}",
+                device, events.len(), acquired.duration_since(started).as_micros(),
+                acquired.elapsed().as_micros(), result.is_ok());
+        }
+        result
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn cc_list_guests(state: State<'_, AppState>) -> Result<Vec<GuestInfo>, String> {
     with_client(state.client.clone(), |c: &mut CcClient| {
         c.list_guests().map_err(|e| e.to_string())
@@ -495,10 +557,15 @@ pub async fn cc_list_polecats(state: State<'_, AppState>) -> Result<PoecatStatus
 pub async fn cc_log_stream(
     slot: u32,
     pd_id: u32,
+    by_handle: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     with_client(state.client.clone(), move |c: &mut CcClient| {
-        c.log_stream(slot, pd_id).map_err(|e| e.to_string())
+        if by_handle.unwrap_or(false) {
+            c.guest_console(slot).map_err(|e| e.to_string())
+        } else {
+            c.log_stream(slot, pd_id).map_err(|e| e.to_string())
+        }
     })
     .await
 }

@@ -27,6 +27,11 @@ use std::io::{self, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod desktop_input;
+pub use desktop_input::{DesktopInputEvent, InputBatchAck};
+mod frame_capture;
+pub use frame_capture::FrameInfo;
+
 // ── MSG_CC_* opcodes (from agentos.h) ────────────────────────────────────────
 pub const MSG_CC_CONNECT: u32 = 0x2601;
 pub const MSG_CC_DISCONNECT: u32 = 0x2602;
@@ -53,6 +58,8 @@ pub const MSG_CC_TRACE_START: u32 = 0x2616;
 pub const MSG_CC_TRACE_STOP: u32 = 0x2617;
 pub const MSG_CC_TRACE_QUERY: u32 = 0x2618;
 pub const MSG_CC_TRACE_DUMP: u32 = 0x2619;
+pub const MSG_CC_FRAME_CAPTURE: u32 = 0x261D;
+pub const MSG_CC_INPUT_SUBMIT: u32 = 0x261E;
 pub const MSG_CC_CONNECTION_SYNC: u32 = 0x261F;
 pub const MSG_CC_AUTHORITY: u32 = 0x2620;
 
@@ -311,6 +318,81 @@ const CC_REQ_SIZE: usize = 4 + 12 + CC_SHMEM_SIZE; // 4112
 const CC_REPLY_SIZE: usize = 16 + CC_SHMEM_SIZE; // 4112
 const CC_GREETING_SIZE: usize = CC_REPLY_SIZE; // same wire shape as a reply: mr[4] + shmem
 const CC_IO_TIMEOUT: Duration = Duration::from_secs(5);
+// CC_CONNECTION_MAGIC / CC_CONNECTION_VERSION / MSG_CC_CONNECTION_SYNC are
+// declared once, publicly, with the other bootstrap constants near the top
+// of this file.
+
+fn read_cc_frame(stream: &mut UnixStream, frame: &mut [u8]) -> io::Result<()> {
+    let deadline = Instant::now() + CC_IO_TIMEOUT;
+    let mut offset = 0;
+    while offset < frame.len() {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "CC frame deadline"));
+        }
+        stream.set_read_timeout(Some(left))?;
+        match stream.read(&mut frame[offset..]) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "incomplete CC frame",
+                ))
+            }
+            Ok(n) => offset += n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
+fn write_cc_frame(stream: &mut UnixStream, frame: &[u8]) -> io::Result<()> {
+    let deadline = Instant::now() + CC_IO_TIMEOUT;
+    let mut offset = 0;
+    while offset < frame.len() {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "CC frame deadline"));
+        }
+        stream.set_write_timeout(Some(left))?;
+        match stream.write(&frame[offset..]) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    "incomplete CC frame",
+                ))
+            }
+            Ok(n) => offset += n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
+/// Perform the `cc_pd` connection bootstrap on a freshly-opened stream:
+/// read and validate the unprompted greeting, then reply with
+/// `MSG_CC_CONNECTION_SYNC` echoing the greeting's version and generation
+/// and carrying the operator credential in
+/// `shmem[0..CC_OPERATOR_TOKEN_BYTES]`.
+///
+/// The sync payload is deliberately NOT all-zero. Since agentOS T1, `cc_pd`
+/// validates an operator credential at `MSG_CC_CONNECTION_SYNC` and refuses
+/// a zero credential outright, so a credential-free handshake cannot
+/// connect at all.
+fn synchronize_connection(stream: &mut UnixStream) -> io::Result<()> {
+    // Credential source is resolved before we touch the wire: a malformed
+    // override must fail loudly, not silently fall back and produce a
+    // confusing closed connection later.
+    let credential = operator_credential()?;
+
+    // 1. cc_pd speaks first: read its greeting before sending anything.
+    let greeting = CcClient::read_greeting(stream)?;
+
+    // 2. Reply with CONNECTION_SYNC, echoing the version and generation
+    //    cc_pd just sent (never hardcoded) and carrying the credential.
+    CcClient::send_sync(stream, &greeting, &credential)
+}
 const CC_TRAFFIC_MAX: usize = 512;
 const CC_TRACE_ENTRY_SIZE: usize = 16;
 
@@ -496,6 +578,7 @@ pub struct CcClient {
     session_id: u32,
     traffic: VecDeque<TrafficEvent>,
     next_traffic_seq: u64,
+    frame: Option<frame_capture::Snapshot>,
 }
 
 impl CcClient {
@@ -504,23 +587,14 @@ impl CcClient {
         stream.set_read_timeout(Some(CC_IO_TIMEOUT))?;
         stream.set_write_timeout(Some(CC_IO_TIMEOUT))?;
 
-        // Credential source is resolved before we touch the wire: a
-        // malformed override must fail loudly, not silently fall back and
-        // produce a confusing closed connection later.
-        let credential = operator_credential()?;
-
-        // 1. cc_pd speaks first: read its greeting before sending anything.
-        let greeting = Self::read_greeting(&mut stream)?;
-
-        // 2. Reply with CONNECTION_SYNC, echoing the version and generation
-        //    cc_pd just sent (never hardcoded) and carrying the credential.
-        Self::send_sync(&mut stream, &greeting, &credential)?;
+        synchronize_connection(&mut stream)?;
 
         let mut client = CcClient {
             stream,
             session_id: 0,
             traffic: VecDeque::with_capacity(CC_TRAFFIC_MAX),
             next_traffic_seq: 0,
+            frame: None,
         };
 
         // 3. Only now is the connection active. MSG_CC_CONNECT establishes a
@@ -559,6 +633,32 @@ impl CcClient {
                      this does not look like a cc_pd control socket",
                     greeting.magic, CC_CONNECTION_MAGIC
                 ),
+            ));
+        }
+        // The rest of the greeting is validated before we echo any of it
+        // back: an unknown version, a zero generation, or a nonzero
+        // reserved byte means this is not a greeting we can legally mirror
+        // into a CONNECTION_SYNC frame.
+        if greeting.version != CC_CONNECTION_VERSION {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "cc_pd greeting declares protocol version {} but this \
+                     client speaks version {}",
+                    greeting.version, CC_CONNECTION_VERSION
+                ),
+            ));
+        }
+        if (greeting.generation_lo | greeting.generation_hi) == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "cc_pd greeting carries a zero transport generation",
+            ));
+        }
+        if buf[16..].iter().any(|&b| b != 0) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "cc_pd greeting has nonzero reserved bytes after its header",
             ));
         }
         Ok(greeting)
@@ -924,6 +1024,20 @@ impl CcClient {
         Ok(s)
     }
 
+    /// Explicit public-handle addressing; mode zero is the legacy log-slot API.
+    pub fn guest_console(&mut self, handle: u32) -> io::Result<String> {
+        const CC_LOG_ADDRESS_HANDLE: u32 = 1;
+        let reply = self.send_recv(MSG_CC_LOG_STREAM, handle, 0, CC_LOG_ADDRESS_HANDLE, &[])?;
+        let status = u32::from_le_bytes(reply[0..4].try_into().unwrap());
+        let length = u32::from_le_bytes(reply[4..8].try_into().unwrap()) as usize;
+        let echoed = u32::from_le_bytes(reply[8..12].try_into().unwrap());
+        if status != 0 || length > CC_SHMEM_SIZE || echoed != handle {
+            return Err(io::Error::new(io::ErrorKind::InvalidData,
+                format!("guest console handle {handle}: status={status}, length={length}, echoed={echoed}")));
+        }
+        Ok(String::from_utf8_lossy(&reply[16..16 + length]).into_owned())
+    }
+
     pub fn device_status(
         &mut self,
         dev_type: u32,
@@ -1115,7 +1229,10 @@ impl CcClient {
             req[16..16 + copy_len].copy_from_slice(&shmem_in[..copy_len]);
         }
 
-        if let Err(err) = self.stream.write_all(&req).map_err(Self::cc_io_error) {
+        if let Err(err) = write_cc_frame(&mut self.stream, &req).map_err(Self::cc_io_error) {
+            // A partial frame cannot be resumed by another command. In
+            // particular, input might already have been accepted remotely.
+            let _ = self.stream.shutdown(std::net::Shutdown::Both);
             let msg = err.to_string();
             self.record_traffic(
                 opcode,
@@ -1131,11 +1248,8 @@ impl CcClient {
         }
 
         let mut reply = [0u8; CC_REPLY_SIZE];
-        if let Err(err) = self
-            .stream
-            .read_exact(&mut reply)
-            .map_err(Self::cc_io_error)
-        {
+        if let Err(err) = read_cc_frame(&mut self.stream, &mut reply).map_err(Self::cc_io_error) {
+            let _ = self.stream.shutdown(std::net::Shutdown::Both);
             let msg = err.to_string();
             self.record_traffic(
                 opcode,
@@ -1185,7 +1299,9 @@ impl CcClient {
         }
 
         let has_ok_mr = opcode_has_ok_mr(opcode);
-        let ok = error.is_none() && (!has_ok_mr || reply_mr[0] == 0);
+        let ok = error.is_none()
+            && (!has_ok_mr || reply_mr[0] == 0)
+            && (!matches!(opcode, MSG_CC_INPUT_SUBMIT | MSG_CC_FRAME_CAPTURE) || reply_mr[2] == 0);
 
         self.traffic.push_back(TrafficEvent {
             seq: self.next_traffic_seq,
@@ -1303,6 +1419,8 @@ fn opcode_name(opcode: u32) -> &'static str {
         MSG_CC_TRACE_STOP => "TRACE_STOP",
         MSG_CC_TRACE_QUERY => "TRACE_QUERY",
         MSG_CC_TRACE_DUMP => "TRACE_DUMP",
+        MSG_CC_FRAME_CAPTURE => "FRAME_CAPTURE",
+        MSG_CC_INPUT_SUBMIT => "INPUT_SUBMIT",
         MSG_CC_AUTHORITY => "AUTHORITY",
         _ => "UNKNOWN",
     }
@@ -1333,6 +1451,8 @@ fn opcode_has_ok_mr(opcode: u32) -> bool {
             | MSG_CC_TRACE_STOP
             | MSG_CC_TRACE_QUERY
             | MSG_CC_TRACE_DUMP
+            | MSG_CC_FRAME_CAPTURE
+            | MSG_CC_INPUT_SUBMIT
             | MSG_CC_AUTHORITY
     )
 }
@@ -1346,6 +1466,8 @@ fn reply_shmem_len(opcode: u32, mr: [u32; 4]) -> u32 {
         MSG_CC_GUEST_STATUS if mr[0] == 0 => 32,
         MSG_CC_DEVICE_STATUS if mr[0] == 0 => 16,
         MSG_CC_TRACE_DUMP if mr[0] == 0 => mr[2].min(CC_SHMEM_SIZE as u32),
+        MSG_CC_FRAME_CAPTURE if mr[0] == 0 => mr[1].min(CC_SHMEM_SIZE as u32),
+        MSG_CC_INPUT_SUBMIT if mr[0] == 0 => mr[1].min(CC_SHMEM_SIZE as u32),
         MSG_CC_AUTHORITY if mr[0] == 0 => mr[1].min(CC_SHMEM_SIZE as u32),
         _ => 0,
     }
@@ -1787,6 +1909,8 @@ mod tests {
             ("MSG_CC_TRACE_STOP", MSG_CC_TRACE_STOP),
             ("MSG_CC_TRACE_QUERY", MSG_CC_TRACE_QUERY),
             ("MSG_CC_TRACE_DUMP", MSG_CC_TRACE_DUMP),
+            ("MSG_CC_FRAME_CAPTURE", MSG_CC_FRAME_CAPTURE),
+            ("MSG_CC_INPUT_SUBMIT", MSG_CC_INPUT_SUBMIT),
             ("MSG_CC_CONNECTION_SYNC", MSG_CC_CONNECTION_SYNC),
             ("MSG_CC_AUTHORITY", MSG_CC_AUTHORITY),
         ];
@@ -1914,4 +2038,114 @@ mod tests {
         );
     }
 
+}
+
+#[cfg(test)]
+mod console_tests {
+    use super::*;
+
+    /// Greeting validation plus the shape of the CONNECTION_SYNC frame the
+    /// client sends back. The payload is NOT all-zero: since agentOS T1,
+    /// `cc_pd` validates an operator credential at
+    /// `MSG_CC_CONNECTION_SYNC`, so the frame must carry that credential in
+    /// `shmem[0..CC_OPERATOR_TOKEN_BYTES]` with every remaining byte zero.
+    #[test]
+    fn bootstrap_requires_exact_generation_and_credential_payload() {
+        for mode in 0..5 {
+            let (mut stream, mut peer) = UnixStream::pair().unwrap();
+            let server = std::thread::spawn(move || {
+                peer.set_nonblocking(true).unwrap();
+                assert_eq!(
+                    peer.read(&mut [0u8; 1]).unwrap_err().kind(),
+                    io::ErrorKind::WouldBlock
+                );
+                peer.set_nonblocking(false).unwrap();
+                let mut greeting = [0u8; CC_REPLY_SIZE];
+                for (i, word) in [CC_CONNECTION_MAGIC, 1, 7, 9].iter().enumerate() {
+                    greeting[i * 4..i * 4 + 4].copy_from_slice(&word.to_le_bytes());
+                }
+                if mode == 1 {
+                    greeting[4] = 2;
+                }
+                if mode == 2 {
+                    greeting[8..16].fill(0);
+                }
+                if mode == 3 {
+                    greeting[CC_REPLY_SIZE - 1] = 1;
+                }
+                peer.write_all(&greeting).unwrap();
+                if mode == 0 || mode == 4 {
+                    let mut ack = [0u8; CC_REQ_SIZE];
+                    peer.read_exact(&mut ack).unwrap();
+                    // Expected sync frame: opcode swapped to
+                    // MSG_CC_CONNECTION_SYNC, version and generation echoed
+                    // verbatim, the operator credential in shmem[0..32],
+                    // every remaining byte zero.
+                    let mut expected_sync = [0u8; CC_REQ_SIZE];
+                    expected_sync[..16].copy_from_slice(&greeting[..16]);
+                    expected_sync[..4].copy_from_slice(&MSG_CC_CONNECTION_SYNC.to_le_bytes());
+                    expected_sync[16..16 + CC_OPERATOR_TOKEN_BYTES]
+                        .copy_from_slice(&dev_operator_credential());
+                    assert_eq!(ack, expected_sync);
+                    assert_ne!(
+                        ack[16..16 + CC_OPERATOR_TOKEN_BYTES],
+                        [0u8; CC_OPERATOR_TOKEN_BYTES],
+                        "the credential must not be zero: cc_pd refuses a zero credential"
+                    );
+                    assert!(
+                        ack[16 + CC_OPERATOR_TOKEN_BYTES..].iter().all(|&b| b == 0),
+                        "every shmem byte after the credential must be zero"
+                    );
+                    greeting[..4].fill(0);
+                    if mode == 4 {
+                        greeting[8] += 1;
+                    }
+                    peer.write_all(&greeting).unwrap();
+                }
+            });
+            assert_eq!(synchronize_connection(&mut stream).is_ok(), mode == 0);
+            drop(stream);
+            server.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn public_handle_console_validates_wire_status_length_and_identity() {
+        for (status, length, echoed, valid) in [
+            (0u32, 3u32, 17u32, true),
+            (6, 0, 17, false),
+            (0, 4097, 17, false),
+            (0, 3, 18, false),
+        ] {
+            let (stream, mut peer) = UnixStream::pair().unwrap();
+            let mut client = CcClient {
+                stream,
+                session_id: 0,
+                traffic: VecDeque::new(),
+                next_traffic_seq: 0,
+                frame: None,
+            };
+            let server = std::thread::spawn(move || {
+                let mut request = [0u8; CC_REQ_SIZE];
+                peer.read_exact(&mut request).unwrap();
+                let mut expected = [0u8; CC_REQ_SIZE];
+                for (i, word) in [MSG_CC_LOG_STREAM, 17, 0, 1].iter().enumerate() {
+                    expected[i * 4..i * 4 + 4].copy_from_slice(&word.to_le_bytes());
+                }
+                assert_eq!(request, expected);
+                let mut reply = [0u8; CC_REPLY_SIZE];
+                for (i, word) in [status, length, echoed, 0].iter().enumerate() {
+                    reply[i * 4..i * 4 + 4].copy_from_slice(&word.to_le_bytes());
+                }
+                reply[16..19].copy_from_slice(b"abc");
+                peer.write_all(&reply).unwrap();
+            });
+            let result = client.guest_console(17);
+            assert_eq!(result.is_ok(), valid);
+            if valid {
+                assert_eq!(result.unwrap(), "abc");
+            }
+            server.join().unwrap();
+        }
+    }
 }

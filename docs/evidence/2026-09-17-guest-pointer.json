@@ -1,0 +1,39 @@
+{
+  "schema": "agentos_gui.guest_pointer.v1",
+  "host": "sparky Linux aarch64",
+  "gui_runtime_revision": "7ae583c4974a9d772b7a9d1bcc380326e88b8772",
+  "gui_binary_sha256": "c0a590cf03bbb1ae9a51cdc89edb994e2069364f6638d8572663145f1867f593",
+  "os_checkout_revision": "8ce7d3df7d991bb99cb9268d329ea250a7f61131",
+  "os_image_sha256": "1c7223c78837f8a04c13cc17b09271fab836c96f0e69183a58d1ae769aeae987",
+  "guest_log_sha256": "8c9c3c049ef340042b7513d50d54ecdd44b3975db0e4c44c925415ffe4f94757",
+  "shutdown": {"gui_exit": 0, "qemu_exit": 0},
+  "os_command": "make run GUEST_OS=debian-graphics-input",
+  "gui_command": "make run CC_PD_SOCK=/tmp/agentos-v04-debian-network/build/cc_pd.sock",
+  "device": "/dev/input/event1, name agentOS pointer",
+  "method": "Native Tauri/WebKit pointer capture after a completed framebuffer capture. Guest timeout/cat records Linux input_event structs; od reads each 8-byte payload after its 16-byte timestamp. X11 host input moves17,-9, clicks left, scrolls up once, then holds left while pressing Escape before host button-up.",
+  "motion_and_buttons": {
+    "result": "PASS",
+    "bytes": 240,
+    "events_type_code_value": [[2,0,17],[0,0,0],[2,1,-9],[1,272,1],[1,272,0],[0,0,0],[1,272,1],[0,0,0],[1,272,0],[0,0,0]],
+    "acknowledged_batches": 4,
+    "screenshot_sha256": "ba84b61834453201ee51c7fd2a26703eac974ed8d6d904aa1fd9919ba7af953b",
+    "note": "Final button release follows capture exit on Escape, before host button-up. The single wheel action did not reach an integral detent."
+  },
+  "wheel": {
+    "result": "PASS",
+    "method": "Recapture pointer, send three host scroll-up actions, release with Escape",
+    "bytes": 96,
+    "events_type_code_value": [[2,8,1],[0,0,0],[2,8,1],[0,0,0]],
+    "total_acknowledged_batches": 6,
+    "screenshot_sha256": "fee970e42c76c710f7930f3ad661ac54e83d7cec933e2e3b29e5aa150e3b8aea"
+  },
+  "host_validation": {"make_check": "PASS", "make_test": "116 passed", "make_build": "PASS"},
+  "limitations": [
+    "Native tests cover relative X/Y, left button, vertical wheel and Escape release, not every button or horizontal wheel",
+    "Cross-device modifier ordering, failure recovery, coalescing and fractional wheel boundaries tested with mocked IPC and pointer lock",
+    "Relative input is affected by host/guest acceleration; absolute cursor synchronization is not claimed",
+    "No graphical desktop application interaction or abrupt-disconnect button release guarantee",
+    "Full-frame transfer latency remains unsuitable for responsive desktop use",
+    "No complete milestone or release qualification"
+  ]
+}

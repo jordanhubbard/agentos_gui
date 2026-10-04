@@ -65,6 +65,50 @@ For hot-reload development, use:
 make dev
 ```
 
+## Guest display and keyboard
+
+Managed guest consoles follow the selected guest and keep separate bounded
+transcripts. They require agentOS's explicit public-handle console addressing
+mode (`3fcdf58` or later); automatic boot guests retain the original boot
+stream. The [native Intel receipt](docs/evidence/2026-09-18-intel-console.json)
+records Debian login, typed terminal echo and lifecycle controls over
+SSH-forwarded binary CC sockets. Long-session transcript rollover remains
+tracked separately; this is not desktop display qualification.
+
+Use an agentOS profile with GPU and input devices, such as
+`make run GUEST_OS=debian-graphics-input`. After the guest exposes its
+framebuffer, capture a frame or start live display. Click the displayed frame
+to send physical keyboard events to that guest; its keyboard layout controls
+the resulting text. `Ctrl+Alt+Escape` releases focus. Changing focus or guests
+queues releases for held keys. The console below remains a separate serial
+input path.
+
+Input batches are bounded and acknowledged in order. A rejected or uncertain
+delivery stops further input. **Release guest keys** sends releases for keys
+that may have reached the guest, without replaying presses. If the connection
+has failed, releases cannot be guaranteed; guest-side recovery may be needed.
+Host-reserved shortcuts may never reach the app. IME composition is not implemented.
+
+**Capture pointer** locks relative mouse input to the displayed guest and hides
+the host cursor. Escape releases capture. Movement, five mouse buttons and
+horizontal/vertical wheels use the guest's virtio-input pointer. Keyboard and
+pointer events share one ordered queue, preserving modifier/click order.
+Losing capture releases held buttons. Capture failures are shown explicitly.
+Motion is relative, with host and guest pointer acceleration still applicable;
+the GUI does not promise that host and guest cursor coordinates match. Wheel
+input accumulates one detent per 100 browser pixels, three lines, or one page.
+
+Live display currently transfers full snapshots and can take tens of seconds
+per frame on Spark. This is not yet a responsive remote desktop.
+The Rust bridge batches up to eight observer reads per browser IPC call and
+yields a partial batch after 25 ms, checked between wire replies. Cancellation
+and input can proceed between batches; an in-flight socket operation retains
+its normal timeout. Snapshot validation and the 4,112-byte CC frames are
+unchanged. An initial native comparison on the same retained Spark guest
+measured 44.4 seconds for the baseline and 42.5 seconds for batching for a
+1024x768, 3 MiB frame. One pair does not establish a reliable improvement;
+the display remains unsuitable for interactive desktop use.
+
 ## Build
 
 ```sh
@@ -217,3 +261,33 @@ a real socket — tracked as a follow-up, not attempted here.
 
 Connection flow uses `MSG_CC_CONNECT` and `MSG_CC_DISCONNECT`. Guest launch and
 console input use `MSG_CC_CREATE_GUEST` and `MSG_CC_SEND_INPUT`.
+
+<!-- ai-template:narrative:start -->
+## The Totally True and Not At All Embellished History of agentos_gui
+
+### The continuing adventures of Jordan Hubbard and Sir Reginald von Fluffington III
+
+> *Part 16 of an ongoing chronicle. [← Part 15: Crust](https://github.com/jordanhubbard/crust#the-totally-true-and-not-at-all-embellished-history-of-crust) | [Part 17: PythonOS →](https://github.com/jordanhubbard/pythonos#the-totally-true-and-not-at-all-embellished-history-of-pythonos)*
+> *[Chronicle index](https://github.com/jordanhubbard/ai-template/blob/main/CHRONICLE.md) · Ordered by first recorded AI-assisted commit.*
+
+The programmer had built an operating-system platform for agents and had been quite firm that human user interfaces did not belong inside it.
+
+Then he wanted to see what it was doing.
+
+Sir Reginald von Fluffington III watched this development from outside the keyboard, a temporary separation of concerns caused by the keyboard being unavailable beneath several pages of protocol notes.
+
+“A separate application,” the programmer explained. “It will speak the public contract.”
+
+This was agentos_gui: a Tauri desktop application with a Rust bridge and a React interface. It would connect to the CC-PD Unix socket of a running agentOS instance and turn requests and replies into views a human could inspect. The kernel would not acquire a dependency on a button merely because the programmer wanted one.
+
+The interface exposed guests, devices, logs, agents, and the API. Protocol constants were declared from the published contract rather than imported through kernel headers. This preserved the boundary and created the entirely reasonable obligation to keep the opcode values synchronized. Sir Reginald considered all numeric protocols inferior to his own, in which one fixed stare meant several dozen things depending on context.
+
+Requests and replies were each 4,112 bytes. The programmer appreciated the symmetry. The cat appreciated the piece of paper on which it had been calculated and sat down on it.
+
+A bounded traffic ring made exchanges visible in a live inspector. When a guest did not do what was expected, the programmer could look at the messages rather than debate a diagram. The application also needed something to connect to: agentOS first, GUI second. A desktop window was not evidence that an operating system had booted.
+
+“Now I can see the boundary,” the programmer said.
+
+Sir Reginald stepped across it and occupied the keyboard. The demonstration was clear, the ownership model was disputed, and endorsement remained pending a Guests tab capable of listing the bird outside the window.
+
+<!-- ai-template:narrative:end -->

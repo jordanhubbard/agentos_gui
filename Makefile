@@ -4,15 +4,22 @@
 #   make build        build the native desktop app
 #   make run          run the app against a local agentOS CC-PD socket
 
-.PHONY: all build run dev check test deps clean help
+.PHONY: all build run dev check test test-rust benchmark-frame deps clean help
 
 APP_BIN       := src-tauri/target/release/agentos-gui
 AGENTOS_DIR   ?= $(abspath ../agentos)
 CC_PD_SOCK    ?= $(AGENTOS_DIR)/build/cc_pd.sock
 CC_PD_SOCK_ABS := $(abspath $(CC_PD_SOCK))
 DEPS_STAMP    := node_modules/.deps-stamp
+# The app bundle format is macOS-only. Linux's run target uses the native
+# executable directly; packaging can be requested with TAURI_BUILD_FLAGS.
+TAURI_BUILD_FLAGS ?= $(if $(filter Darwin,$(shell uname -s)),--bundles app,--no-bundle)
 
 all: run
+
+.PHONY: test-x11-device-thread
+test-x11-device-thread:
+	@cargo test --manifest-path src-tauri/Cargo.toml -p tao --lib device::tests
 
 deps: $(DEPS_STAMP)
 
@@ -21,7 +28,7 @@ $(DEPS_STAMP): package.json package-lock.json
 	@touch $@
 
 build: deps
-	@npm run build -- --bundles app
+	@npm run build -- $(TAURI_BUILD_FLAGS)
 
 run:
 	@if [ ! -x "$(APP_BIN)" ]; then \
@@ -52,6 +59,32 @@ check: deps
 test: deps
 	@npm test
 
+test-rust:
+	@cargo test --manifest-path src-tauri/Cargo.toml --lib
+
+BENCH_GUEST_HANDLE ?= 0
+BENCH_READS ?= 128
+benchmark-frame:
+	@cargo run --manifest-path src-tauri/Cargo.toml --example frame_benchmark -- "$(CC_PD_SOCK_ABS)" "$(BENCH_GUEST_HANDLE)" "$(BENCH_READS)"
+
+BENCH_ORDER ?= raw-first
+.PHONY: diagnose-pointer-repaint
+diagnose-pointer-repaint:
+	@mkdir -p build
+	@$(CC) -Wall -Wextra tools/webkit_pointer_repro.c -o build/webkit-pointer-repro $$(pkg-config --cflags --libs webkit2gtk-4.1)
+	@build/webkit-pointer-repro
+
+.PHONY: benchmark-frame-transfer
+benchmark-frame-transfer:
+	@cargo run --manifest-path src-tauri/Cargo.toml --example frame_transfer -- "$(CC_PD_SOCK_ABS)" "$(BENCH_GUEST_HANDLE)" "$(BENCH_ORDER)"
+
+# Focus a rendered native guest display before running. Include the remote
+# input probe command and --gui-latency at the end of BENCH_SSH_ARGS.
+.PHONY: benchmark-native-input
+benchmark-native-input:
+	@test -n "$(BENCH_SSH_ARGS)" || { echo 'Set BENCH_SSH_ARGS for the guest input probe'; exit 1; }
+	@cargo run --manifest-path src-tauri/Cargo.toml --example native_input_latency -- $(BENCH_SSH_ARGS)
+
 clean:
 	@rm -rf dist src-tauri/target src-tauri/gen
 	@echo "✓ Clean."
@@ -67,6 +100,9 @@ help:
 	@echo "  make dev              Run Tauri dev mode against the same socket"
 	@echo "  make check            Type-check frontend"
 	@echo "  make test             Run Playwright tests"
+	@echo "  make test-rust        Test the native binary protocol bridge"
+	@echo "  make diagnose-pointer-repaint  Run standalone GTK/WebKit pointer reproduction"
+	@echo "  make benchmark-frame Measure CC status/frame latency (close GUI first)"
 	@echo "  make clean            Remove frontend/Tauri build artifacts"
 	@echo ""
 	@echo "Overrides:"

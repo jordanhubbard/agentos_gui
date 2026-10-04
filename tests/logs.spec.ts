@@ -24,8 +24,7 @@ test.describe('Log viewer', () => {
     await page.getByRole('button', { name: 'Drain' }).click();
     const calls = await getCallsFor(page, 'cc_log_stream');
     expect(calls.length).toBeGreaterThan(0);
-    expect((calls[0].args as any).slot).toBe(0);
-    expect((calls[0].args as any).pdId).toBe(0);
+    expect(calls.some(call => (call.args as any).slot === 0 && (call.args as any).pdId === 0)).toBe(true);
   });
 
   test('log lines appear after Drain returns content', async ({ page }) => {

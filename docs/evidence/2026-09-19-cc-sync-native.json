@@ -1,0 +1,18 @@
+{
+  "status": "passed bounded native GUI fixture connect/reconnect and normal shutdown",
+  "application_revision": "c748c74",
+  "fixture_revision": "14d2d1e",
+  "binary_sha256": "6bda035523d29bf2b31e36d6686f775ff7e61d27fe2c1c6a4c7a30577ab8dbd8",
+  "environment": "Spark Linux, isolated Xvfb display :0, Openbox, software GL, WebKit DMA-BUF disabled, separate D-Bus session",
+  "socket": "/tmp/agentos-gui-cc-sync-native.sock",
+  "observations": [
+    "The release application launched through make run and automatically synchronized with the updated console fixture.",
+    "Rendered guest view showed connected state and Linux handle 1. Scrolling revealed advancing fixture console bytes; 38 chunks were served during the run.",
+    "Clicking Disconnect showed the socket connection form. Clicking Connect restored the connected guest view and console polling through a fresh generation handshake.",
+    "Window-manager Alt-F4 closed the application. make run returned zero and application PID 1513645 was absent.",
+    "The owned fixture, Openbox and Xvfb processes were deliberately retired after the application exited. Other GUIs and qualification VMs were not touched."
+  ],
+  "artifacts_directory": "/home/jkh/.local/share/agentos-evidence/2026-09-19-x86-ownership/gui-cc-sync-native",
+  "screenshots": ["agentos-gui-cc-sync-native.png", "agentos-gui-cc-sync-console.png", "agentos-gui-cc-sync-disconnected.png", "agentos-gui-cc-sync-reconnected.png"],
+  "limits": "Synthetic console fixture only, not an agentOS guest, GPU/NVIDIA validation, transcript rollover proof, rendered guest-frame proof, physical input delivery, or abrupt GUI termination with guest-held keys. OS input and Intel qualifications continue independently."
+}

@@ -5,8 +5,14 @@ import type {
   InputEvent, GuestCreateRequest, GuestCreateResult, SessionInfo, SessionStatus,
   SessionSendResult, SessionRecvResult, FaultInjectResult, TrafficEvent,
   GuestLifecycleResult, TraceDumpResult, TraceEntry, TraceStatus, AuthoritySnapshot,
+  DesktopInputEvent, InputBatchAck,
 } from '../types';
 import { notPermittedReason, describeCcFailure } from '../lib/ccErrors';
+
+export interface ConsoleChunk {
+  sequence: number;
+  text: string;
+}
 
 export interface AgentOSState {
   connected:   boolean;
@@ -45,7 +51,8 @@ export interface AgentOSState {
   // yet or last succeeded. Cleared only by a successful fetch.
   authorityError: string | null;
   logLines:    string[];
-  consoleChunks: string[];
+  consoleChunks: Record<number, ConsoleChunk[]>;
+  consoleGeneration: number;
   error:       string | null;
   refreshing:  boolean;
 }
@@ -68,7 +75,8 @@ export function useAgentOS() {
     authority: null,
     authorityError: null,
     logLines:   [],
-    consoleChunks: [],
+    consoleChunks: {},
+    consoleGeneration: 0,
     error:      null,
     refreshing: false,
   });
@@ -76,6 +84,9 @@ export function useAgentOS() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const refreshRef = useRef(false);
   const logFetchRef = useRef(false);
+  const consoleFetchRef = useRef(false);
+  const connectionEpoch = useRef(0);
+  const consoleSequence = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -91,6 +102,7 @@ export function useAgentOS() {
         if (!shouldAutoconnect) return;
 
         try {
+          connectionEpoch.current++;
           await invoke('cc_connect', { path: sockPath });
           if (!cancelled) {
             setState(s => ({
@@ -117,6 +129,7 @@ export function useAgentOS() {
 
   const connect = useCallback(async (path: string) => {
     try {
+      connectionEpoch.current++;
       await invoke('cc_connect', { path });
       setState(s => ({ ...s, connected: true, sockPath: path, error: null }));
       startPolling();
@@ -126,6 +139,7 @@ export function useAgentOS() {
   }, []);
 
   const disconnect = useCallback(async () => {
+    connectionEpoch.current++;
     stopPolling();
     try { await invoke('cc_disconnect'); } catch {}
     setState(s => ({
@@ -144,7 +158,7 @@ export function useAgentOS() {
       authority: null,
       authorityError: null,
       logLines: [],
-      consoleChunks: [],
+      consoleChunks: {},
     }));
   }, []);
 
@@ -257,7 +271,6 @@ export function useAgentOS() {
         setState(s => ({
           ...s,
           logLines: [...s.logLines, ...lines].slice(-500),
-          consoleChunks: [...s.consoleChunks, text].slice(-300),
           traffic: traffic ?? s.traffic,
         }));
       }
@@ -265,6 +278,32 @@ export function useAgentOS() {
     } catch {}
     finally { logFetchRef.current = false; }
     return '';
+  }, []);
+
+  const fetchConsole = useCallback(async (guest: GuestInfo) => {
+    if (consoleFetchRef.current) return '';
+    const epoch = connectionEpoch.current;
+    consoleFetchRef.current = true;
+    try {
+      const text = await invoke<string>('cc_log_stream', {
+        slot: guest.guest_handle, pdId: 0, byHandle: guest.guest_handle !== 0,
+      });
+      if (epoch !== connectionEpoch.current) return '';
+      const chunk = { sequence: ++consoleSequence.current, text };
+      if (text) setState(s => {
+        // A response always belongs to the guest requested, even if selection
+        // changed while the native socket operation was in flight.
+        if (!s.connected || !s.guests.some(g => g.guest_handle === guest.guest_handle)) return s;
+        const consoleChunks = Object.fromEntries(Object.entries(s.consoleChunks)
+          .filter(([handle]) => s.guests.some(g => g.guest_handle === Number(handle))));
+        consoleChunks[guest.guest_handle] = [...(consoleChunks[guest.guest_handle] ?? []), chunk].slice(-300);
+        return { ...s, consoleChunks };
+      });
+      return text;
+    } catch (e) {
+      if (epoch === connectionEpoch.current) setState(s => ({ ...s, error: String(e) }));
+      throw e;
+    } finally { consoleFetchRef.current = false; }
   }, []);
 
   const guestStatus = useCallback(
@@ -304,6 +343,14 @@ export function useAgentOS() {
   const sendInput = useCallback(
     (handle: number, event: InputEvent) =>
       invoke<void>('cc_send_input', { handle, event }),
+    [],
+  );
+
+  // Await each batch before sending the next. A rejected promise has an
+  // unknown remote outcome and must never cause an automatic input replay.
+  const submitInput = useCallback(
+    (handle: number, device: 0 | 1, events: DesktopInputEvent[]) =>
+      invoke<InputBatchAck>('cc_input_submit', { handle, device, events }),
     [],
   );
 
@@ -377,13 +424,12 @@ export function useAgentOS() {
   );
 
   const clearLogs = useCallback(() =>
-    setState(s => ({ ...s, logLines: [], consoleChunks: [] })), []);
+    setState(s => ({ ...s, logLines: [], consoleChunks: {}, consoleGeneration: s.consoleGeneration + 1 })), []);
 
   function startPolling() {
     if (pollRef.current) return;
     pollRef.current = setInterval(() => {
       refresh();
-      fetchLogs(0, 0);
     }, 2000);
     refresh();
   }
@@ -401,6 +447,7 @@ export function useAgentOS() {
     disconnect,
     refresh,
     fetchLogs,
+    fetchConsole,
     guestStatus,
     snapshot,
     restore,
@@ -408,6 +455,7 @@ export function useAgentOS() {
     resumeGuest,
     destroyGuest,
     sendInput,
+    submitInput,
     deviceStatus,
     createGuest,
     listSessions,

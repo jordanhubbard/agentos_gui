@@ -5,6 +5,7 @@ import { ConnectDialog } from './components/ConnectDialog';
 import { Sidebar, type Tab } from './components/Sidebar';
 import { GuestCard } from './components/GuestCard';
 import { GuestConsole } from './components/GuestConsole';
+import { GuestDisplay } from './components/GuestDisplay';
 import { GuestLauncher } from './components/GuestLauncher';
 import { DevicePanel } from './components/DevicePanel';
 import { LogViewer } from './components/LogViewer';
@@ -14,7 +15,7 @@ import { TopologyGraph } from './components/TopologyGraph';
 
 export default function App() {
   const {
-    state, connect, disconnect, refresh, fetchLogs, snapshot, restore,
+    state, connect, disconnect, refresh, fetchLogs, fetchConsole, snapshot, restore,
     suspendGuest, resumeGuest, destroyGuest, sendInput, deviceStatus,
     createGuest, listSessions, sessionStatus, sessionSend, sessionRecv,
     attachFramebuffer, faultInject, traceStart, traceStop, traceQuery,
@@ -27,6 +28,14 @@ export default function App() {
   const selectedGuest = state.guests.find(g => g.guest_handle === selectedGuestHandle)
     ?? state.guests[0]
     ?? null;
+
+  useEffect(() => {
+    if (!state.connected || !selectedGuest) return;
+    const poll = () => { void fetchConsole(selectedGuest).catch(() => {}); };
+    poll();
+    const timer = setInterval(poll, 2000);
+    return () => clearInterval(timer);
+  }, [state.connected, selectedGuest?.guest_handle, selectedGuest?.os_type, fetchConsole]);
 
   useEffect(() => {
     if (state.guests.length === 0) {
@@ -157,10 +166,12 @@ export default function App() {
                     ))}
                   </div>
                   <div className="min-w-0 space-y-5">
+                    {selectedGuest && <GuestDisplay key={selectedGuest.guest_handle} guest={selectedGuest} />}
                     <GuestConsole
+                      key={`console-${selectedGuest?.guest_handle ?? 'none'}-${state.consoleGeneration}`}
                       guest={selectedGuest}
-                      chunks={state.consoleChunks}
-                      onFetch={fetchLogs}
+                      chunks={selectedGuest ? state.consoleChunks[selectedGuest.guest_handle] ?? [] : []}
+                      onFetch={() => selectedGuest ? fetchConsole(selectedGuest) : Promise.resolve('')}
                       onSendInput={sendInput}
                     />
                     <TopologyGraph

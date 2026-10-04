@@ -41,7 +41,7 @@ test.describe('Guest list', () => {
     });
 
     test('Running state shown in emerald color', async ({ page }) => {
-      const runningBadge = page.getByText('Running');
+      const runningBadge = page.getByText('Running', { exact: true });
       await expect(runningBadge).toBeVisible();
       await expect(runningBadge).toHaveClass(/text-emerald-400/);
     });
@@ -118,8 +118,9 @@ test.describe('Guest list', () => {
       await page.getByRole('button', { name: 'Drain' }).click();
       const calls = await getCallsFor(page, 'cc_log_stream');
       expect(calls.length).toBeGreaterThan(0);
-      expect((calls[0].args as any).slot).toBe(0);
+      expect((calls[0].args as any).slot).toBe(1);
       expect((calls[0].args as any).pdId).toBe(0);
+      expect((calls[0].args as any).byHandle).toBe(true);
     });
 
     test('terminal key presses send raw console bytes from the selected guest terminal', async ({ page }) => {
@@ -139,7 +140,7 @@ test.describe('Guest list', () => {
     });
 
     test('Start calls cc_create_guest with launch settings', async ({ page }) => {
-      await page.getByRole('button', { name: 'Start' }).click();
+      await page.getByRole('button', { name: 'Start', exact: true }).click();
       const calls = await getCallsFor(page, 'cc_create_guest');
       expect(calls.length).toBeGreaterThan(0);
       expect((calls[0].args as any).request).toMatchObject({
@@ -150,6 +151,49 @@ test.describe('Guest list', () => {
       });
     });
   });
+});
+
+test.describe('Guest launch RAM editing', () => {
+  test.beforeEach(async ({ page }) => {
+    await setupTauriMock(page, { cc_list_guests: [] });
+    await page.goto('/');
+    await connectApp(page);
+  });
+
+  test('preserves partial edits and submits exactly the typed RAM', async ({ page }) => {
+    const ram = page.getByRole('spinbutton');
+    await ram.fill('');
+    await expect(ram).toHaveValue('');
+    for (const [digit, value] of [['1', '1'], ['0', '10'], ['2', '102'], ['4', '1024']]) {
+      await ram.pressSequentially(digit);
+      await expect(ram).toHaveValue(value);
+    }
+    await page.getByRole('button', { name: 'X64', exact: true }).click();
+    await page.getByRole('button', { name: 'Start', exact: true }).click();
+    await expect.poll(async () => (await getCallsFor(page, 'cc_create_guest')).length).toBe(1);
+    const calls = await getCallsFor(page, 'cc_create_guest');
+    expect((calls[0].args as any).request).toEqual({
+      os_type: 1, arch: 2, ram_mb: 1024, device_flags: 7,
+    });
+  });
+
+  for (const value of ['', '1', '127', '-128', '128.5', '4294967296']) {
+    test(`rejects invalid RAM ${JSON.stringify(value)} before making a request`, async ({ page }) => {
+      const ram = page.getByRole('spinbutton');
+      await ram.fill(value);
+      await page.getByRole('button', { name: 'Start', exact: true }).click();
+      await expect(page.getByText('RAM must be a whole number between 128 and 4294967295 MiB.')).toBeVisible();
+      expect(await getCallsFor(page, 'cc_create_guest')).toHaveLength(0);
+      await expect(ram).toHaveValue(value);
+
+      await ram.fill('128');
+      await expect(page.getByText(/RAM must be/)).toHaveCount(0);
+      await page.getByRole('button', { name: 'Start', exact: true }).click();
+      await expect.poll(async () => (await getCallsFor(page, 'cc_create_guest')).length).toBe(1);
+      const calls = await getCallsFor(page, 'cc_create_guest');
+      expect((calls[0].args as any).request.ram_mb).toBe(128);
+    });
+  }
 });
 
 test.describe('Snapshot / restore flow', () => {

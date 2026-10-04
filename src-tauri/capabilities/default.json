@@ -6,6 +6,7 @@
   "permissions": [
     "allow-cc-connect",
     "allow-cc-disconnect",
+    "allow-cc-is-connected",
     "allow-cc-list-sessions",
     "allow-cc-session-status",
     "allow-cc-session-send",
@@ -24,6 +25,10 @@
     "allow-cc-list-polecats",
     "allow-cc-log-stream",
     "allow-cc-send-input",
+    "allow-cc-input-submit",
+    "allow-cc-frame-capture",
+    "allow-cc-frame-read",
+    "allow-cc-frame-release",
     "allow-cc-get-sock-path",
     "allow-cc-should-autoconnect",
     "allow-cc-allowed-sock-paths",
