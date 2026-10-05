@@ -50,18 +50,20 @@ jobs:
     # Requires a second checkout of jordanhubbard/agentos (a *different*
     # repository from this one) so the Rust drift guard
     # (cc_ipc.rs::drift_guard_against_agentos_source) can diff this repo's
-    # re-declared protocol constants against the real headers. The default
-    # GITHUB_TOKEN is scoped to this repository only, so that checkout needs
-    # a PAT with read access to agentos -- configure it as the
-    # AGENTOS_RO_PAT repository secret. Without it, this job's checkout step
-    # fails outright (a 404, not a silent skip): AGENTOS_DRIFT_GUARD_REQUIRED
-    # below is only read *after* a successful checkout, so a missing/invalid
-    # secret fails this job loudly instead of reporting green.
+    # re-declared protocol constants against the real headers.
     #
-    # Forks never receive repository secrets regardless, so this job is
-    # skipped for fork PRs rather than failing on every one of them for a
-    # reason external contributors cannot fix. It still runs for same-repo
-    # pushes and PRs.
+    # jordanhubbard/agentos is PUBLIC, so the default GITHUB_TOKEN reads it
+    # without any additional credential. This step previously passed
+    # `token: ${{ secrets.AGENTOS_RO_PAT }}`; that secret was never configured,
+    # so every run of this job failed at checkout with "Input required and not
+    # supplied: token" -- which meant the drift guard never actually ran, in a
+    # job whose whole purpose is catching protocol drift. If agentos is ever
+    # made private, restore an explicit read-only PAT here.
+    #
+    # Fork PRs are still skipped: they cannot be trusted with the broader
+    # token scope this job would need if a credential is reintroduced, and
+    # failing every external PR for a reason contributors cannot fix is worse
+    # than not running the guard on them.
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
@@ -75,7 +77,6 @@ jobs:
         with:
           repository: jordanhubbard/agentos
           path: agentos
-          token: ${{ secrets.AGENTOS_RO_PAT }}
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
