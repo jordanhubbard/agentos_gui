@@ -13,20 +13,19 @@ test.describe('ConnectDialog', () => {
     await expect(page.getByText('Socket path')).toBeVisible();
   });
 
-  test('input has default socket path', async ({ page }) => {
-    const input = page.getByPlaceholder('build/cc_pd.sock');
-    await expect(input).toBeVisible();
-    await expect(input).toHaveValue('build/cc_pd.sock');
+  test('shows the backend-resolved socket path, read-only', async ({ page }) => {
+    const field = page.getByLabel('Socket path');
+    await expect(field).toHaveValue('build/cc_pd.sock');
+    await expect(field).toHaveAttribute('readonly', '');
   });
 
-  test('restores saved socket path from localStorage', async ({ page }) => {
-    await page.addInitScript(() => {
-      localStorage.setItem('cc_sock_path', 'custom/agent.sock');
-    });
-    await page.reload();
-    await expect(page.getByPlaceholder('build/cc_pd.sock')).toHaveValue(
-      'custom/agent.sock',
-    );
+  test('documents CC_PD_SOCK as the way to use a different socket', async ({ page }) => {
+    await expect(page.getByText('CC_PD_SOCK', { exact: false })).toBeVisible();
+  });
+
+  test('does not offer a picker when only one socket path is known', async ({ page }) => {
+    // Default mock's cc_allowed_sock_paths has exactly one entry.
+    await expect(page.getByLabel('Known locations')).toHaveCount(0);
   });
 
   test('transitions to main app after successful connect', async ({ page }) => {
@@ -35,24 +34,34 @@ test.describe('ConnectDialog', () => {
     await expect(page.getByRole('button', { name: 'Connect', exact: true })).not.toBeVisible();
   });
 
-  test('calls cc_connect with the entered path', async ({ page }) => {
-    await connectApp(page, 'run/cc.sock');
+  test('calls cc_connect with the backend-resolved default path', async ({ page }) => {
+    await connectApp(page);
     const calls = await getCallsFor(page, 'cc_connect');
     expect(calls).toHaveLength(1);
-    expect((calls[0].args as any).path).toBe('run/cc.sock');
+    expect((calls[0].args as any).path).toBe('build/cc_pd.sock');
+  });
+
+  test('offers every backend-resolved candidate in the picker and connects with the one chosen', async ({ page }) => {
+    await setupTauriMock(page, {
+      cc_allowed_sock_paths: ['build/cc_pd.sock', '../agentos/build/cc_pd.sock'],
+    });
+    await page.reload();
+
+    const picker = page.getByLabel('Known locations');
+    await expect(picker).toBeVisible();
+    await picker.selectOption('../agentos/build/cc_pd.sock');
+    await expect(page.getByLabel('Socket path')).toHaveValue('../agentos/build/cc_pd.sock');
+
+    await page.getByRole('button', { name: 'Connect' }).click();
+    await expect(page.getByRole('button', { name: 'Guests' })).toBeVisible();
+
+    const calls = await getCallsFor(page, 'cc_connect');
+    expect((calls.at(-1)!.args as any).path).toBe('../agentos/build/cc_pd.sock');
   });
 
   test('pressing Enter also connects', async ({ page }) => {
-    await page.getByPlaceholder('build/cc_pd.sock').press('Enter');
+    await page.getByLabel('Socket path').press('Enter');
     await expect(page.getByRole('button', { name: 'Guests' })).toBeVisible();
-  });
-
-  test('saves socket path to localStorage on connect', async ({ page }) => {
-    await connectApp(page, 'saved/path.sock');
-    const stored = await page.evaluate(() =>
-      localStorage.getItem('cc_sock_path'),
-    );
-    expect(stored).toBe('saved/path.sock');
   });
 
   test('shows error message when cc_connect fails', async ({ page }) => {

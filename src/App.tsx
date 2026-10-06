@@ -66,6 +66,7 @@ export default function App() {
     return (
       <ConnectDialog
         defaultPath={state.sockPath}
+        sockPathOptions={state.sockPathOptions}
         onConnect={connect}
         error={state.error}
       />
@@ -174,11 +175,10 @@ export default function App() {
                       onSendInput={sendInput}
                     />
                     <TopologyGraph
-                      guest={selectedGuest}
-                      devices={state.devices}
-                      sessions={state.sessions}
                       traffic={state.traffic}
                       traceEvents={state.traceEvents}
+                      authority={state.authority}
+                      authorityError={state.authorityError}
                     />
                   </div>
                 </div>
@@ -212,6 +212,9 @@ export default function App() {
               onFaultInject={faultInject}
               traceStatus={state.traceStatus}
               traceEvents={state.traceEvents}
+              traceNotPermitted={state.traceNotPermitted}
+              traceError={state.traceError}
+              authority={state.authority}
               onTraceStart={traceStart}
               onTraceStop={traceStop}
               onTraceQuery={traceQuery}

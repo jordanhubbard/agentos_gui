@@ -4,9 +4,10 @@ import type {
   GuestInfo, GuestStatus, DeviceInfo, DeviceStatusInfo, PoecatStatus, SnapResult,
   InputEvent, GuestCreateRequest, GuestCreateResult, SessionInfo, SessionStatus,
   SessionSendResult, SessionRecvResult, FaultInjectResult, TrafficEvent,
-  GuestLifecycleResult, TraceDumpResult, TraceEntry, TraceStatus,
+  GuestLifecycleResult, TraceDumpResult, TraceEntry, TraceStatus, AuthoritySnapshot,
   DesktopInputEvent, InputBatchAck,
 } from '../types';
+import { notPermittedReason, describeCcFailure } from '../lib/ccErrors';
 
 export interface ConsoleChunk {
   sequence: number;
@@ -16,14 +17,39 @@ export interface ConsoleChunk {
 export interface AgentOSState {
   connected:   boolean;
   sockPath:    string;
+  sockPathOptions: string[];
   guests:      GuestInfo[];
   devices:     DeviceInfo[];
   polecats:    PoecatStatus | null;
   sessions:    SessionInfo[];
   sessionStatus: SessionStatus | null;
   traffic:     TrafficEvent[];
+  // null means trace hasn't been fetched yet, or the last fetch failed --
+  // see traceNotPermitted/traceError for which. A failed fetch clears these
+  // rather than leaving the previous cycle's data rendering as current (the
+  // authority snapshot below already got this right; trace did not, and
+  // the GUI showed stale trace data with no staleness marker on an ordinary
+  // transport failure).
   traceStatus: TraceStatus | null;
   traceEvents: TraceEntry[];
+  // Reason cc_pd's operator authority envelope gave for refusing the trace
+  // relay, if it has — null means either trace hasn't been tried yet or it
+  // isn't refused. See src/lib/ccErrors.ts.
+  traceNotPermitted: string | null;
+  // Reason the last trace fetch failed for any reason OTHER than an
+  // operator-envelope refusal (that case is traceNotPermitted, above) --
+  // e.g. an ordinary transport/protocol failure. Null if trace hasn't been
+  // tried yet, was refused (not this), or last succeeded.
+  traceError: string | null;
+  // The boot-time authority snapshot (MSG_CC_AUTHORITY), or null if it has
+  // not been fetched yet or the last fetch failed. See
+  // src/components/TopologyGraph.tsx for why a failure must render an
+  // explicit "unavailable" state rather than falling back to anything that
+  // looks like real data.
+  authority: AuthoritySnapshot | null;
+  // Reason the last authority fetch failed, or null if it hasn't been tried
+  // yet or last succeeded. Cleared only by a successful fetch.
+  authorityError: string | null;
   logLines:    string[];
   consoleChunks: Record<number, ConsoleChunk[]>;
   consoleGeneration: number;
@@ -35,6 +61,7 @@ export function useAgentOS() {
   const [state, setState] = useState<AgentOSState>({
     connected:  false,
     sockPath:   'build/cc_pd.sock',
+    sockPathOptions: [],
     guests:     [],
     devices:    [],
     polecats:   null,
@@ -43,6 +70,10 @@ export function useAgentOS() {
     traffic:    [],
     traceStatus: null,
     traceEvents: [],
+    traceNotPermitted: null,
+    traceError: null,
+    authority: null,
+    authorityError: null,
     logLines:   [],
     consoleChunks: {},
     consoleGeneration: 0,
@@ -61,12 +92,13 @@ export function useAgentOS() {
     let cancelled = false;
     Promise.all([
       invoke<string>('cc_get_sock_path'),
+      invoke<string[]>('cc_allowed_sock_paths').catch(() => []),
       invoke<boolean>('cc_should_autoconnect'),
     ])
-      .then(async ([sockPath, shouldAutoconnect]) => {
+      .then(async ([sockPath, sockPathOptions, shouldAutoconnect]) => {
         if (cancelled || !sockPath) return;
 
-        setState(s => ({ ...s, sockPath }));
+        setState(s => ({ ...s, sockPath, sockPathOptions }));
         if (!shouldAutoconnect) return;
 
         try {
@@ -121,6 +153,10 @@ export function useAgentOS() {
       traffic: [],
       traceStatus: null,
       traceEvents: [],
+      traceNotPermitted: null,
+      traceError: null,
+      authority: null,
+      authorityError: null,
       logLines: [],
       consoleChunks: {},
     }));
@@ -138,8 +174,6 @@ export function useAgentOS() {
         sessions,
         sessionStatus,
         traffic,
-        traceStatus,
-        traceDump,
       ] = await Promise.all([
         invoke<GuestInfo[]>('cc_list_guests'),
         invoke<DeviceInfo[]>('cc_list_devices', { devType: null }),
@@ -147,9 +181,47 @@ export function useAgentOS() {
         invoke<SessionInfo[]>('cc_list_sessions'),
         invoke<SessionStatus>('cc_session_status', { sessionId: null }),
         invoke<TrafficEvent[]>('cc_traffic_events', { limit: 192 }),
-        invoke<TraceStatus>('cc_trace_query'),
-        invoke<TraceDumpResult>('cc_trace_dump', { maxEvents: 128 }),
       ]);
+
+      // Trace relay is part of cc_pd's operator authority envelope and may
+      // be legitimately refused (CC_ERR_NOT_PERMITTED) independently of
+      // everything above. It is deliberately kept out of the Promise.all:
+      // Promise.all rejects wholesale on the first rejection, so a refused
+      // trace call must not take guests/devices/polecats/sessions/traffic
+      // down with it on every single refresh cycle.
+      const [traceStatusResult, traceDumpResult] = await Promise.all([
+        invoke<TraceStatus>('cc_trace_query').catch((e: unknown) => ({ error: e })),
+        invoke<TraceDumpResult>('cc_trace_dump', { maxEvents: 128 }).catch((e: unknown) => ({ error: e })),
+      ]);
+      const traceFailure =
+        ('error' in traceStatusResult && traceStatusResult.error) ||
+        ('error' in traceDumpResult && traceDumpResult.error) ||
+        null;
+      const traceNotPermitted = traceFailure ? notPermittedReason(traceFailure) : null;
+      // Any trace failure other than an operator-envelope refusal (that's
+      // traceNotPermitted, handled elsewhere) -- an ordinary transport or
+      // protocol fault. Previously a failure here fell through silently:
+      // the reducer kept the previous cycle's traceStatus/traceEvents with
+      // no staleness marker, so ApiPanel and TopologyGraph kept rendering
+      // old trace data as if it were current. Now any failure clears both,
+      // same as the authority snapshot above.
+      const traceError = traceFailure && !traceNotPermitted
+        ? describeCcFailure(traceFailure)
+        : null;
+
+      // The authority snapshot is read independently of everything above
+      // for the same reason trace is: it must never take the rest of a
+      // refresh cycle down with it, and a failure here must become an
+      // explicit "unavailable" reason in state, never a silent fallback to
+      // stale or fabricated data (see TopologyGraph.tsx).
+      const authorityResult = await invoke<AuthoritySnapshot>('cc_authority')
+        .then(snapshot => ({ snapshot }))
+        .catch((e: unknown) => ({ error: e }));
+      const authority = 'snapshot' in authorityResult ? authorityResult.snapshot : null;
+      const authorityError = 'error' in authorityResult
+        ? describeCcFailure(authorityResult.error)
+        : null;
+
       const guests = await Promise.all(rawGuests.map(async guest => {
         try {
           const status = await invoke<GuestStatus>('cc_guest_status', {
@@ -171,8 +243,12 @@ export function useAgentOS() {
         sessions,
         sessionStatus,
         traffic,
-        traceStatus,
-        traceEvents: traceDump.events,
+        traceStatus: traceFailure ? null : (traceStatusResult as TraceStatus),
+        traceEvents: traceFailure ? [] : (traceDumpResult as TraceDumpResult).events,
+        traceNotPermitted,
+        traceError,
+        authority,
+        authorityError,
         error: null,
         refreshing: false,
       }));

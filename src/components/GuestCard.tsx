@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { AlertCircle, Camera, CheckCircle, PauseCircle, PlayCircle, Power, RotateCcw } from 'lucide-react';
+import { AlertCircle, Camera, CheckCircle, PauseCircle, PlayCircle, Power, RotateCcw, ShieldOff } from 'lucide-react';
 import type { GuestInfo, GuestLifecycleResult, SnapResult } from '../types';
 import {
   GUEST_STATE, OS_TYPE, ARCH_TYPE, DEV_TYPE_NAME,
   guestStateDot, guestStateColor,
 } from '../types';
 import { DeviceIcon } from './DeviceIcon';
+import { notPermittedReason } from '../lib/ccErrors';
 
 interface Props {
   guest:      GuestInfo;
@@ -31,6 +32,12 @@ export function GuestCard({
   const [snap, setSnap]   = useState<SnapResult | null>(null);
   const [busy, setBusy]   = useState(false);
   const [msg, setMsg]     = useState<string | null>(null);
+  // Reason cc_pd's operator authority envelope gave for refusing snapshot
+  // or restore, if it has. Once set we disable the control rather than let
+  // the operator keep retrying something cc_pd will always refuse — but we
+  // never hide it: whether it's refused is a fact about the connected
+  // cc_pd, not something this GUI decides.
+  const [notPermitted, setNotPermitted] = useState<{ snapshot?: string; restore?: string }>({});
 
   const devBits = (guest as any).device_flags as number | undefined;
   const isRunning = guest.state === 4;
@@ -43,7 +50,14 @@ export function GuestCard({
       const s = await onSnapshot(guest.guest_handle);
       setSnap(s);
       setMsg(`snapshot 0x${s.snap_hi.toString(16)}:${s.snap_lo.toString(16)}`);
-    } catch (e) { setMsg(`error: ${e}`); }
+    } catch (e) {
+      const reason = notPermittedReason(e);
+      if (reason) {
+        setNotPermitted(n => ({ ...n, snapshot: reason }));
+      } else {
+        setMsg(`error: ${e}`);
+      }
+    }
     finally { setBusy(false); }
   }
 
@@ -53,7 +67,14 @@ export function GuestCard({
     try {
       await onRestore(guest.guest_handle, snap.snap_lo, snap.snap_hi);
       setMsg('restore queued');
-    } catch (e) { setMsg(`error: ${e}`); }
+    } catch (e) {
+      const reason = notPermittedReason(e);
+      if (reason) {
+        setNotPermitted(n => ({ ...n, restore: reason }));
+      } else {
+        setMsg(`error: ${e}`);
+      }
+    }
     finally { setBusy(false); }
   }
 
@@ -119,24 +140,30 @@ export function GuestCard({
       <div className="grid gap-2 sm:grid-cols-2">
         <button
           onClick={e => { e.stopPropagation(); doSnapshot(); }}
-          disabled={busy || isDead}
+          disabled={busy || isDead || !!notPermitted.snapshot}
+          title={notPermitted.snapshot ? `refused by the operator authority envelope: ${notPermitted.snapshot}` : undefined}
           className="flex h-8 flex-1 items-center justify-center gap-2 rounded-lg border border-os-border px-3
                      font-mono text-xs text-os-muted transition
                      hover:border-os-accent/50 hover:text-os-accent
                      disabled:opacity-40"
         >
-          <Camera aria-hidden="true" className="h-3.5 w-3.5" />
+          {notPermitted.snapshot
+            ? <ShieldOff aria-hidden="true" className="h-3.5 w-3.5" />
+            : <Camera aria-hidden="true" className="h-3.5 w-3.5" />}
           Snapshot
         </button>
         <button
           onClick={e => { e.stopPropagation(); doRestore(); }}
-          disabled={busy || !snap || isDead}
+          disabled={busy || !snap || isDead || !!notPermitted.restore}
+          title={notPermitted.restore ? `refused by the operator authority envelope: ${notPermitted.restore}` : undefined}
           className="flex h-8 flex-1 items-center justify-center gap-2 rounded-lg border border-os-border px-3
                      font-mono text-xs text-os-muted transition
                      hover:border-sky-500/50 hover:text-sky-400
                      disabled:opacity-40"
         >
-          <RotateCcw aria-hidden="true" className="h-3.5 w-3.5" />
+          {notPermitted.restore
+            ? <ShieldOff aria-hidden="true" className="h-3.5 w-3.5" />
+            : <RotateCcw aria-hidden="true" className="h-3.5 w-3.5" />}
           Restore
         </button>
         <button
@@ -180,6 +207,12 @@ export function GuestCard({
             ? <AlertCircle aria-hidden="true" className="h-3.5 w-3.5 flex-none" />
             : <CheckCircle aria-hidden="true" className="h-3.5 w-3.5 flex-none" />}
           {msg}
+        </p>
+      )}
+      {(notPermitted.snapshot || notPermitted.restore) && (
+        <p className="mt-2 flex items-center gap-2 font-mono text-xs text-amber-400">
+          <ShieldOff aria-hidden="true" className="h-3.5 w-3.5 flex-none" />
+          refused by the operator authority envelope: {notPermitted.snapshot ?? notPermitted.restore}
         </p>
       )}
     </div>

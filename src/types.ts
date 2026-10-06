@@ -123,6 +123,59 @@ export interface TraceDumpResult {
   events:         TraceEntry[];
 }
 
+// ── Authority snapshot (MSG_CC_AUTHORITY, 0x2620) ─────────────────────────────
+//
+// A ledger of what the root task recorded granting to each protection
+// domain at boot, by capability kind -- NOT a reading of live kernel state
+// (seL4 exposes no capability-enumeration syscall) and NOT a verification
+// of the subsetting invariant, which the kernel enforces unconditionally
+// and independently. See src/components/TopologyGraph.tsx for how this is
+// labelled in the UI.
+
+/** Capability kind order is ABI (platform/include/platform/authority.h) --
+ * append only, never reorder. Index into `AuthorityRow.counts` by this
+ * order. */
+export const AUTHORITY_KIND_NAMES = [
+  'untyped',
+  'tcb',
+  'endpoint',
+  'notification',
+  'cnode',
+  'frame',
+  'vspace',
+  'irq_handler',
+  'sched_context',
+  'reply',
+  'other',
+] as const;
+
+/** Sentinel `pd_index` for the root task's own row (R16) -- root's initial
+ * capabilities would otherwise collide with descriptor index 0
+ * (`nameserver`). */
+export const AUTHORITY_ROOT_PD_INDEX = 0xffffffff;
+
+export interface AuthorityRow {
+  pd_index: number;
+  /** True for the root task's sentinel row (`pd_index === 0xFFFFFFFF`). */
+  is_root: boolean;
+  /** Decoded from a 32-byte NUL-padded (not NUL-terminated) field, rendered
+   * as recorded -- including any upstream truncation already baked into
+   * the name agentOS recorded (e.g. "operator_sessio" for
+   * "operator_session"). Never reconstructed or guessed. */
+  name: string;
+  /** One count per `AUTHORITY_KIND_NAMES` entry, same order. */
+  counts: number[];
+}
+
+export interface AuthoritySnapshot {
+  version: number;
+  pd_count: number;
+  total_recorded: number;
+  truncated_adds: number;
+  saturated: boolean;
+  rows: AuthorityRow[];
+}
+
 export interface TrafficEvent {
   seq:           number;
   at_ms:         number;
@@ -210,6 +263,15 @@ export const CC_INPUT_MOUSE_MOVE = 0x03;
 export const CC_INPUT_MOUSE_BTN  = 0x04;
 export const CC_INPUT_RAW_BYTE_BASE = 0x100;
 
+// Hand-maintained copy of the CC-PD opcode surface, rendered in the API tab
+// as if current. It is NOT covered by the Rust drift guard
+// (src-tauri/src/cc_ipc.rs::drift_guard_against_agentos_source), which only
+// checks the Rust-side MSG_CC_* constants against agentOS's headers -- this
+// TypeScript list can rot independently of that check, and did (it stopped
+// at 0x2619 and was missing MSG_CC_CONNECTION_SYNC / MSG_CC_AUTHORITY, both
+// opcodes this GUI actively uses, until this list was brought current).
+// Next reader: if you add an opcode in src-tauri/src/cc_ipc.rs, add it here
+// too -- nothing will fail the build if you don't.
 export const CC_API_SURFACE = [
   { opcode: '0x2601', name: 'CONNECT', surface: 'connection' },
   { opcode: '0x2602', name: 'DISCONNECT', surface: 'connection' },
@@ -236,17 +298,32 @@ export const CC_API_SURFACE = [
   { opcode: '0x2617', name: 'TRACE_STOP', surface: 'trace' },
   { opcode: '0x2618', name: 'TRACE_QUERY', surface: 'trace' },
   { opcode: '0x2619', name: 'TRACE_DUMP', surface: 'trace' },
+  { opcode: '0x261f', name: 'CONNECTION_SYNC', surface: 'connection' },
+  { opcode: '0x2620', name: 'AUTHORITY', surface: 'guests' },
 ] as const;
 
-export const TRACE_PD_NAME: Record<number, string> = {
-  0: 'controller',
-  12: 'vibe_engine',
-  20: 'fault_handler',
-  25: 'trace_recorder',
-  41: 'linux_vmm',
-  42: 'freebsd_vmm',
-  43: 'cc_pd',
-};
+/**
+ * Label a `from_pd`/`to_pd` index from a `MSG_CC_TRACE_DUMP` event. Nothing
+ * in the trace wire data carries PD names, so this is NOT allowed to
+ * invent one (that was the bug: a hand-maintained `{0: 'controller', 12:
+ * 'vibe_engine', ...}` table applied to real trace traffic, which went
+ * stale the moment agentOS renumbered or retired a PD — `vibe_engine` was
+ * already gone from agentOS's booted set while this table still named it).
+ *
+ * The only names this GUI has any basis for are the ones `MSG_CC_AUTHORITY`
+ * actually reported for the running `cc_pd` at boot. When that snapshot is
+ * available and has a row for this `pd_index`, use its recorded name (or
+ * "root task" for the sentinel row); otherwise fall back to `pd{n}` —
+ * never to a name this GUI guessed.
+ */
+export function tracePdLabel(pdIndex: number, authority: AuthoritySnapshot | null): string {
+  const row = authority?.rows.find(r => r.pd_index === pdIndex);
+  if (row) {
+    if (row.is_root) return 'root task';
+    if (row.name) return row.name;
+  }
+  return `pd${pdIndex}`;
+}
 
 export function rawTerminalKeycode(byte: number): number {
   return CC_INPUT_RAW_BYTE_BASE | (byte & 0xff);

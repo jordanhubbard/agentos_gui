@@ -1,0 +1,110 @@
+name: CI
+
+# Modest by design: this is a desktop GUI, not an OS gate. We do NOT build or
+# boot agentOS here -- that needs the qualified seL4 SDK and a QEMU/hardware
+# target, which is out of scope for this repo's CI. We only need agentOS's
+# *source headers* on disk so the drift guard (src-tauri/src/cc_ipc.rs) can
+# read the authoritative protocol constants out of them and compare against
+# this repo's re-declared copies.
+#
+# What this job does NOT catch: anything that requires a live cc_pd to
+# observe (e.g. a refused call breaking an unrelated UI panel). That needs a
+# separate job that boots agentOS and exercises the GUI against a real
+# socket -- tracked as a follow-up, not attempted here.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    # npm/TypeScript/Playwright checks never need the agentOS source tree,
+    # so they run unconditionally -- including for fork PRs, which receive
+    # no secrets and would otherwise get no CI signal at all.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out agentos_gui
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: npm ci
+        run: npm ci
+
+      - name: npm run check (tsc --noEmit)
+        run: npm run check
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Playwright suite
+        run: npm run test
+
+  drift-guard:
+    # Requires a second checkout of jordanhubbard/agentos (a *different*
+    # repository from this one) so the Rust drift guard
+    # (cc_ipc.rs::drift_guard_against_agentos_source) can diff this repo's
+    # re-declared protocol constants against the real headers.
+    #
+    # jordanhubbard/agentos is PUBLIC, so the default GITHUB_TOKEN reads it
+    # without any additional credential. This step previously passed
+    # `token: ${{ secrets.AGENTOS_RO_PAT }}`; that secret was never configured,
+    # so every run of this job failed at checkout with "Input required and not
+    # supplied: token" -- which meant the drift guard never actually ran, in a
+    # job whose whole purpose is catching protocol drift. If agentos is ever
+    # made private, restore an explicit read-only PAT here.
+    #
+    # Fork PRs are still skipped: they cannot be trusted with the broader
+    # token scope this job would need if a credential is reintroduced, and
+    # failing every external PR for a reason contributors cannot fix is worse
+    # than not running the guard on them.
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Check out agentos_gui
+        uses: actions/checkout@v4
+        with:
+          path: agentos_gui
+
+      - name: Check out agentOS (sibling, headers only)
+        uses: actions/checkout@v4
+        with:
+          repository: jordanhubbard/agentos
+          path: agentos
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            agentos_gui/src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('agentos_gui/src-tauri/Cargo.lock') }}
+
+      - name: Install Tauri Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: cargo test (including the agentOS drift guard, required)
+        working-directory: agentos_gui/src-tauri
+        env:
+          # ${{ github.workspace }} is the directory containing both sibling
+          # checkouts above (agentos_gui/ and agentos/), so this always
+          # resolves regardless of the runner's absolute path.
+          AGENTOS_SRC: ${{ github.workspace }}/agentos
+          # A skip here (tree not found) must fail the build, not pass --
+          # the checkout step above guarantees the tree exists, so any skip
+          # in this job means the checkout broke, not that the tree is
+          # legitimately absent (that's the normal, acceptable local case).
+          AGENTOS_DRIFT_GUARD_REQUIRED: '1'
+        run: cargo test
